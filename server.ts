@@ -9,6 +9,14 @@ import admin from 'firebase-admin';
 import { getFirestore } from 'firebase-admin/firestore';
 import crypto from 'crypto';
 import { normalizeCountry } from './utils/countries';
+import { detectCardClockwiseRotation } from './utils/cardOrientationServer';
+import {
+  DEFAULT_CARD_SOURCE,
+  inferCountryFromCard,
+  auditCardQsCategory,
+  getBoundQsSubmissionList,
+  stripQsAuditNotes,
+} from './utils/qsValidation';
 
 dotenv.config({ override: true });
 
@@ -160,6 +168,17 @@ async function startServer() {
     return content_list.map((c: any) => c.plain_text).join('');
   };
 
+  const getTagsFromNotionProp = (p: any): string[] => {
+    const prop = p['tags'];
+    if (!prop) return [];
+    if (prop.type === 'multi_select' && Array.isArray(prop.multi_select)) {
+      return prop.multi_select.map((opt: any) => String(opt.name || '').trim()).filter(Boolean);
+    }
+    const raw = getV(prop);
+    if (!raw) return [];
+    return raw.split(/[,;]+/).map((t: string) => t.trim()).filter(Boolean);
+  };
+
   const toRichText = (val: any) => {
     const str = String(val || '');
     // Notion API allows max 2000 chars per text element, and max 100 elements in a rich_text array.
@@ -215,6 +234,9 @@ async function startServer() {
           scannedAt: p['scannedAt']?.number || Date.now(),
           rotation: p['rotation']?.number || 0,
           imageUrl: getImageUrlFromNotionProps(p, notionImageProperty),
+          backImageUrl: getImageUrlFromNotionProps(p, 'back_image_url') || undefined,
+          backRotation: p['backRotation']?.number || 0,
+          tags: getTagsFromNotionProp(p),
           translations: {
             company: getV(p['trans_company']),
             title: getV(p['trans_title']),
@@ -228,13 +250,14 @@ async function startServer() {
           industry: getV(p['industry']),
           country: normalizeCountry(getV(p['country'])),
           subject: getV(p['subject']),
-          source: getV(p['source']),
+          source: getV(p['source']) || DEFAULT_CARD_SOURCE,
           notes: getV(p['notes']),
           summary: getV(p['summary']),
           reasoning: getV(p['reasoning']),
           physicalCount: p['physicalCount']?.number !== undefined ? p['physicalCount']?.number : 1,
           syncStatus: 'notion',
-          syncedToNotion: true
+          syncedToNotion: true,
+          notionUnsyncedChanges: false
         };
       });
 
@@ -323,6 +346,17 @@ async function startServer() {
                       return { phone_number: String(value).trim() };
                   case 'select':
                       return { select: { name: String(value).trim().substring(0, 100) } };
+                  case 'multi_select': {
+                      const items = Array.isArray(value)
+                        ? value
+                        : String(value).split(/[,;]+/).map(s => s.trim()).filter(Boolean);
+                      if (items.length === 0) return null;
+                      return {
+                        multi_select: items.slice(0, 50).map((item: string) => ({
+                          name: String(item).replace(/,/g, ' ').trim().substring(0, 100)
+                        }))
+                      };
+                  }
                   default:
                       droppedKeys.push(`${key}(unsupported type: ${type})`);
                       return null;
@@ -344,6 +378,7 @@ async function startServer() {
 
       apply('scannedAt', data.scannedAt);
       apply('rotation', data.rotation);
+      apply('backRotation', data.backRotation);
       apply('email', data.email);
       apply('website', data.website);
       apply('phone', data.phone);
@@ -357,19 +392,25 @@ async function startServer() {
       apply('country', normalizeCountry(data.country));
       apply('prefix', data.prefix);
       apply('subject', data.subject);
-      apply('source', data.source);
+      apply('source', data.source || DEFAULT_CARD_SOURCE);
       apply('notes', data.notes);
       apply('summary', data.summary);
       apply('reasoning', data.reasoning);
       apply('physicalCount', data.physicalCount);
+      if (Array.isArray(data.tags) && data.tags.length > 0) {
+        const tagSchemaType = (validProps as any)['tags']?.type;
+        apply('tags', tagSchemaType === 'multi_select' ? data.tags : data.tags.join(', '));
+      }
       
       if (data.title) apply('job_title', data.title);
       if (data.imageUrl) apply(notionImageProperty, data.imageUrl);
+      if (data.backImageUrl) apply('back_image_url', data.backImageUrl);
 
-      // --- Image Reference Counting ---
-      if (data.imageId) {
+      // --- Image Reference Counting (Front & Back) ---
+      const updateAssetRefCount = async (newAssetId?: string, oldAssetId?: string) => {
+        if (!newAssetId) return;
         try {
-          const assetRef = db.collection('image_assets').doc(data.imageId);
+          const assetRef = db.collection('image_assets').doc(newAssetId);
           await db.runTransaction(async (transaction) => {
             const assetDoc = await transaction.get(assetRef);
             if (assetDoc.exists) {
@@ -380,12 +421,18 @@ async function startServer() {
                   updatedAt: Date.now(),
                   status: 'active'
                 });
-              } else if (data.oldImageId && data.oldImageId !== data.imageId) {
-                const oldAssetRef = db.collection('image_assets').doc(data.oldImageId);
+              } else if (oldAssetId && oldAssetId !== newAssetId) {
+                const oldAssetRef = db.collection('image_assets').doc(oldAssetId);
                 transaction.update(oldAssetRef, { 
                   refCount: admin.firestore.FieldValue.increment(-1),
                   updatedAt: Date.now()
                 });
+                transaction.update(assetRef, { 
+                  refCount: admin.firestore.FieldValue.increment(1),
+                  updatedAt: Date.now(),
+                  status: 'active'
+                });
+              } else if (!oldAssetId) {
                 transaction.update(assetRef, { 
                   refCount: admin.firestore.FieldValue.increment(1),
                   updatedAt: Date.now(),
@@ -397,7 +444,10 @@ async function startServer() {
         } catch (e) {
           console.error("RefCount Error:", e);
         }
-      }
+      };
+
+      await updateAssetRefCount(data.imageId, data.oldImageId);
+      await updateAssetRefCount(data.backImageId, data.oldBackImageId);
 
       if (data.translations) {
           apply('trans_company', data.translations.company);
@@ -467,7 +517,7 @@ async function startServer() {
   app.delete('/api/notion/delete/:id', async (req, res) => {
     try {
       const pageId = req.params.id;
-      const { imageId } = req.query;
+      const { imageId, backImageId } = req.query;
       const apiKey = normalizeSecret(process.env.NOTION_API_KEY);
       if (!apiKey) {
         throw new Error("[NOTION_CONFIG_ERROR] NOTION_API_KEY is missing.");
@@ -491,10 +541,11 @@ async function startServer() {
         }
       }
 
-      // Decrement refCount if imageId is provided
-      if (imageId && typeof imageId === 'string') {
+      // Decrement refCount for front and back image assets if provided
+      const decrementAsset = async (assetId?: unknown) => {
+        if (!assetId || typeof assetId !== 'string') return;
         try {
-          const assetRef = db.collection('image_assets').doc(imageId);
+          const assetRef = db.collection('image_assets').doc(assetId);
           await db.runTransaction(async (transaction) => {
             const assetDoc = await transaction.get(assetRef);
             if (assetDoc.exists) {
@@ -504,20 +555,20 @@ async function startServer() {
                 refCount: newCount,
                 updatedAt: Date.now()
               };
-              
-              // If refCount hits 0, mark for deletion in 24h
               if (newCount === 0) {
                 updateData.status = 'pending_delete';
                 updateData.deleteAfter = Date.now() + (24 * 60 * 60 * 1000);
               }
-              
               transaction.update(assetRef, updateData);
             }
           });
         } catch (e) {
           console.error("Delete RefCount Error:", e);
         }
-      }
+      };
+
+      await decrementAsset(imageId);
+      await decrementAsset(backImageId);
 
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ success: false, error: e.message }); }
@@ -605,6 +656,9 @@ async function startServer() {
           scannedAt: p['scannedAt']?.number || new Date(page.last_edited_time || Date.now()).getTime(),
           rotation: p['rotation']?.number || 0,
           imageUrl: getImageUrlFromNotionProps(p, notionImageProperty),
+          backImageUrl: getImageUrlFromNotionProps(p, 'back_image_url') || undefined,
+          backRotation: p['backRotation']?.number || 0,
+          tags: getTagsFromNotionProp(p),
           translations: {
             company: getV(p['trans_company']),
             title: getV(p['trans_title']),
@@ -618,7 +672,7 @@ async function startServer() {
           industry: getV(p['industry']),
           country: normalizeCountry(getV(p['country'])),
           subject: getV(p['subject']),
-          source: getV(p['source']),
+          source: getV(p['source']) || DEFAULT_CARD_SOURCE,
           notes: getV(p['notes']),
           summary: getV(p['summary']),
           reasoning: getV(p['reasoning']),
@@ -679,12 +733,388 @@ async function startServer() {
     }
   });
 
+  // --- 5.3 API：伺服器端名片自動翻正分析 (POST /api/cards/auto-upright) ---
+  app.post('/api/cards/auto-upright', async (req, res) => {
+    try {
+      const { cards: inputCards, base64, mimeType } = req.body || {};
+
+      // Single base64 image mode (used during new scan pipeline)
+      if (base64 && typeof base64 === 'string') {
+        const cleanB64 = base64.includes(',') ? base64.split(',')[1] : base64;
+        const buf = Buffer.from(cleanB64, 'base64');
+        const det = detectCardClockwiseRotation(buf, mimeType || 'image/jpeg', 0);
+        return res.json({
+          success: true,
+          rotation: det ? det.recommendedRotation : 0,
+          analysis: det,
+        });
+      }
+
+      if (!Array.isArray(inputCards) || inputCards.length === 0) {
+        return res.json({ success: true, updates: [], changedCount: 0 });
+      }
+
+      const updates: Array<{
+        id: string;
+        rotation: number;
+        backRotation?: number;
+        changed: boolean;
+      }> = [];
+
+      const analyzeUrlOrDataUri = async (
+        src: string | undefined,
+        curRot: number
+      ): Promise<number> => {
+        if (!src) return curRot;
+        try {
+          if (src.startsWith('data:')) {
+            const m = src.match(/^data:(.*?);base64,(.*)$/);
+            if (!m) return curRot;
+            const buf = Buffer.from(m[2], 'base64');
+            const det = detectCardClockwiseRotation(buf, m[1] || 'image/jpeg', curRot);
+            return det ? det.recommendedRotation : curRot;
+          }
+          if (src.startsWith('http')) {
+            const resp = await fetch(src);
+            if (!resp.ok) return curRot;
+            const buf = Buffer.from(await resp.arrayBuffer());
+            const ct = resp.headers.get('content-type') || 'image/jpeg';
+            const det = detectCardClockwiseRotation(buf, ct, curRot);
+            return det ? det.recommendedRotation : curRot;
+          }
+        } catch {
+          // keep current rotation on network error
+        }
+        return curRot;
+      };
+
+      const CONCURRENCY = 10;
+      let cursor = 0;
+      const workers = Array.from(
+        { length: Math.min(CONCURRENCY, inputCards.length) },
+        async () => {
+          while (cursor < inputCards.length) {
+            const item = inputCards[cursor++];
+            const curFront = Number(item.rotation || 0);
+            const curBack = Number(item.backRotation || 0);
+            const nextFront = await analyzeUrlOrDataUri(item.imageUrl, curFront);
+            const nextBack = item.backImageUrl
+              ? await analyzeUrlOrDataUri(item.backImageUrl, curBack)
+              : curBack;
+            const normCurFront = (((Math.round(curFront / 90) * 90) % 360) + 360) % 360;
+            const normCurBack = (((Math.round(curBack / 90) * 90) % 360) + 360) % 360;
+            const changed =
+              nextFront !== curFront ||
+              nextFront !== normCurFront ||
+              (Boolean(item.backImageUrl) && (nextBack !== curBack || nextBack !== normCurBack));
+            updates.push({
+              id: item.id,
+              rotation: nextFront,
+              backRotation: item.backImageUrl ? nextBack : curBack,
+              changed,
+            });
+          }
+        }
+      );
+      await Promise.all(workers);
+
+      const changedCount = updates.filter((u) => u.changed).length;
+      res.json({ success: true, updates, changedCount });
+    } catch (e: any) {
+      console.error('[SERVER_ERROR] cards/auto-upright:', e);
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  // --- 5.4 API：Notion 全庫批次標準化維護 (來源、自動翻正、國家補齊、QS分類修正) ---
+  app.post('/api/notion/batch-maintenance', async (req, res) => {
+    try {
+      const {
+        targetSource = DEFAULT_CARD_SOURCE,
+        autoUpright = true,
+        fixQsCategories = true,
+        inferCountries = true,
+      } = req.body || {};
+
+      const apiKey = normalizeSecret(process.env.NOTION_API_KEY);
+      if (!apiKey) throw new Error('[NOTION_CONFIG_ERROR] NOTION_API_KEY is missing.');
+      const dbIdClean = normalizeSecret(process.env.NOTION_DATABASE_ID);
+      if (!dbIdClean) throw new Error('[NOTION_CONFIG_ERROR] NOTION_DATABASE_ID is missing.');
+
+      // 1. Fetch Notion DB Schema
+      const dbResp = await fetch(`https://api.notion.com/v1/databases/${dbIdClean}`, {
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Notion-Version': '2022-06-28',
+        },
+      });
+      if (!dbResp.ok) {
+        const errJson: any = await dbResp.json();
+        throw new Error(errJson.message || 'Failed to read Notion schema');
+      }
+      const dbSchema: any = await dbResp.json();
+      const propsSchema = dbSchema.properties || {};
+
+      const buildProp = (key: string, val: any) => {
+        const s = propsSchema[key];
+        if (!s || val === undefined || val === null || String(val).trim() === '') return null;
+        if (s.type === 'rich_text') {
+          return { rich_text: [{ text: { content: String(val).substring(0, 1990) } }] };
+        }
+        if (s.type === 'select') {
+          return { select: { name: String(val).trim().substring(0, 100) } };
+        }
+        if (s.type === 'number') {
+          const n = Number(val);
+          return isNaN(n) ? null : { number: n };
+        }
+        return null;
+      };
+
+      // 2. Load all pages from Notion
+      const allPages: any[] = [];
+      let hasMore = true;
+      let startCursor: string | undefined = undefined;
+      while (hasMore) {
+        const qResp = await fetch(`https://api.notion.com/v1/databases/${dbIdClean}/query`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+            'Notion-Version': '2022-06-28',
+          },
+          body: JSON.stringify({ page_size: 100, start_cursor: startCursor }),
+        });
+        const qJson: any = await qResp.json();
+        if (!qResp.ok) throw new Error(qJson.message || 'Failed to query Notion');
+        allPages.push(...(qJson.results || []));
+        hasMore = Boolean(qJson.has_more);
+        startCursor = qJson.next_cursor || undefined;
+      }
+
+      const parsedCards = allPages.map((page: any) => {
+        const p = page.properties || {};
+        return {
+          id: page.id,
+          名稱: getV(p['名稱']),
+          firstName: getV(p['firstName']),
+          lastName: getV(p['lastName']),
+          company: getV(p['company']),
+          department: getV(p['department']),
+          title: getV(p['job_title']),
+          email: p['email']?.email || '',
+          phone: getV(p['phone']),
+          fax: '',
+          address: getV(p['address']),
+          category: (getV(p['category']) || 'other') as any,
+          scannedAt: p['scannedAt']?.number || Date.now(),
+          rotation: p['rotation']?.number,
+          imageUrl: getImageUrlFromNotionProps(p, notionImageProperty),
+          backImageUrl: getImageUrlFromNotionProps(p, 'back_image_url') || undefined,
+          backRotation: p['backRotation']?.number,
+          tags: getTagsFromNotionProp(p),
+          translations: {
+            company: getV(p['trans_company']),
+            title: getV(p['trans_title']),
+            department: getV(p['trans_dept']),
+            industry: getV(p['trans_ind']),
+            subject: getV(p['trans_subj']),
+            country: normalizeCountry(getV(p['trans_ctry'])),
+          },
+          website: getV(p['website']),
+          prefix: getV(p['prefix']),
+          industry: getV(p['industry']),
+          country: normalizeCountry(getV(p['country'])),
+          subject: getV(p['subject']),
+          rawSource: getV(p['source']),
+          source: getV(p['source']) || targetSource,
+          notes: getV(p['notes']),
+          summary: getV(p['summary']),
+          reasoning: getV(p['reasoning']),
+          syncStatus: 'notion' as const,
+        };
+      });
+
+      let sourceUpdated = 0;
+      let rotationUpdated = 0;
+      let countryUpdated = 0;
+      let categoryUpdated = 0;
+      const categoryChangeDetails: Array<{
+        id: string;
+        name: string;
+        company: string;
+        from: string;
+        to: string;
+        reason: string;
+      }> = [];
+
+      const patchQueue: Array<{ id: string; props: any }> = [];
+      let idx = 0;
+      const analyzeWorkers = Array.from(
+        { length: Math.min(12, Math.max(1, parsedCards.length)) },
+        async () => {
+          while (idx < parsedCards.length) {
+            const c = parsedCards[idx++];
+            const props: any = {};
+
+            if (targetSource && c.rawSource !== targetSource) {
+              const p = buildProp('source', targetSource);
+              if (p) {
+                props.source = p;
+                sourceUpdated++;
+              }
+              c.source = targetSource;
+            }
+
+            const curRot = Number(c.rotation ?? 0);
+            let nextRot = (((Math.round(curRot / 90) * 90) % 360) + 360) % 360;
+            if (autoUpright && c.imageUrl && c.imageUrl.startsWith('http')) {
+              try {
+                const r = await fetch(c.imageUrl);
+                if (r.ok) {
+                  const buf = Buffer.from(await r.arrayBuffer());
+                  const ct = r.headers.get('content-type') || 'image/jpeg';
+                  const det = detectCardClockwiseRotation(buf, ct, curRot);
+                  if (det) nextRot = det.recommendedRotation;
+                }
+              } catch {
+                // ignore fetch error
+              }
+            }
+            if (autoUpright && (c.rotation === undefined || c.rotation === null || curRot !== nextRot)) {
+              if (curRot !== nextRot) rotationUpdated++;
+              const p = buildProp('rotation', nextRot);
+              if (p) props.rotation = p;
+              c.rotation = nextRot;
+            } else {
+              c.rotation = nextRot;
+            }
+
+            if (inferCountries) {
+              const infCtry = inferCountryFromCard(c);
+              if (infCtry && infCtry !== c.country) {
+                const p = buildProp('country', infCtry);
+                if (p) {
+                  props.country = p;
+                  countryUpdated++;
+                }
+                c.country = infCtry;
+              }
+            }
+
+            if (c.reasoning && c.reasoning.includes('[QS 分類健檢修正')) {
+              const cleanedReasoning = stripQsAuditNotes(c.reasoning);
+              if (propsSchema['reasoning']?.type === 'rich_text') {
+                props.reasoning = cleanedReasoning
+                  ? { rich_text: [{ text: { content: cleanedReasoning.substring(0, 1990) } }] }
+                  : { rich_text: [] };
+              }
+              c.reasoning = cleanedReasoning;
+            }
+
+            if (fixQsCategories) {
+              const audit = auditCardQsCategory(c as any);
+              if (audit.hasError && audit.suggestedCategory !== c.category) {
+                const prevCat = c.category;
+                const nextCat = audit.suggestedCategory;
+                const p = buildProp('category', nextCat);
+                if (p) {
+                  props.category = p;
+                  categoryUpdated++;
+                  categoryChangeDetails.push({
+                    id: c.id,
+                    name: `${c.lastName || ''} ${c.firstName || ''}`.trim() || c.company || c.id,
+                    company: c.company || '',
+                    from: prevCat,
+                    to: nextCat,
+                    reason: audit.reason || '',
+                  });
+                }
+                c.category = nextCat;
+              }
+            }
+
+            if (Object.keys(props).length > 0) {
+              patchQueue.push({ id: c.id, props });
+            }
+          }
+        }
+      );
+      await Promise.all(analyzeWorkers);
+
+      let notionPatched = 0;
+      let notionFailed = 0;
+      let pCursor = 0;
+
+      const patchWorkers = Array.from(
+        { length: Math.min(4, Math.max(1, patchQueue.length)) },
+        async () => {
+          while (pCursor < patchQueue.length) {
+            const job = patchQueue[pCursor++];
+            let done = false;
+            for (let attempt = 0; attempt < 5; attempt++) {
+              const resp = await fetch(`https://api.notion.com/v1/pages/${job.id}`, {
+                method: 'PATCH',
+                headers: {
+                  Authorization: `Bearer ${apiKey}`,
+                  'Content-Type': 'application/json',
+                  'Notion-Version': '2022-06-28',
+                },
+                body: JSON.stringify({ properties: job.props }),
+              });
+              if (resp.ok) {
+                done = true;
+                break;
+              }
+              if (resp.status === 429) {
+                const retryAfter = Number(resp.headers.get('retry-after') || '2');
+                await new Promise((r) => setTimeout(r, (retryAfter + 0.5) * 1000));
+                continue;
+              }
+              if (resp.status >= 500) {
+                await new Promise((r) => setTimeout(r, 1200));
+                continue;
+              }
+              break;
+            }
+            if (done) notionPatched++;
+            else notionFailed++;
+          }
+        }
+      );
+      await Promise.all(patchWorkers);
+
+      const boundSummary = getBoundQsSubmissionList(parsedCards as any);
+
+      res.json({
+        success: true,
+        totalCards: parsedCards.length,
+        notionPatched,
+        notionFailed,
+        sourceUpdated,
+        rotationUpdated,
+        countryUpdated,
+        categoryUpdated,
+        categoryChangeDetails,
+        boundSummary: {
+          totalReady: boundSummary.readyCards.length,
+          academicCount: boundSummary.academicCards.length,
+          employerCount: boundSummary.employerCards.length,
+          excludedDuplicates: boundSummary.excludedDuplicates.length,
+        },
+      });
+    } catch (e: any) {
+      console.error('[SERVER_ERROR] notion/batch-maintenance:', e);
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
   // --- 6. API：Gemini OCR 與分析 (POST) ---
   app.post('/api/analyze-card', async (req, res) => {
     try {
-      const { action, image, mimeType, card, cards } = req.body;
+      const { action, image, imageUrl, mimeType, card, cards } = req.body;
       const ai = getAiClient();
-      const model = 'gemini-3.8-flash';
+      const model = 'gemini-4-hydrogen';
 
       if (action === 'summaryFromText') {
         const prompt = `請根據以下名片資訊，撰寫一段「精簡專業」的介紹文 (約 50-100 字，繁體中文)。\n姓名: ${card.lastName}${card.firstName}\n公司: ${card.company}\n職稱: ${card.title}\n部門: ${card.department || ''}\n產業: ${card.industry || ''}\n備註: ${card.notes || ''}\n【撰寫要求】：直接回傳純文字，不需標題。`;
@@ -825,6 +1255,226 @@ async function startServer() {
         return res.json({ success: true, boxes: data.boxes || [] });
       }
 
+      if (action === 'extractBackInfo') {
+        const frontSummary = JSON.stringify({
+          prefix: card?.prefix || '',
+          firstName: card?.firstName || '',
+          lastName: card?.lastName || '',
+          title: card?.title || '',
+          company: card?.company || '',
+          department: card?.department || '',
+          industry: card?.industry || '',
+          country: card?.country || '',
+          email: card?.email || '',
+          phone: card?.phone || '',
+          fax: card?.fax || '',
+          website: card?.website || '',
+          address: card?.address || '',
+          subject: card?.subject || '',
+          translations: card?.translations || {},
+        });
+
+        let resolvedBase64 = image || '';
+        let resolvedMimeType = mimeType || 'image/jpeg';
+
+        if (!resolvedBase64 && imageUrl) {
+          if (String(imageUrl).startsWith('data:image')) {
+            resolvedMimeType = String(imageUrl).match(/data:(.*?);/)?.[1] || 'image/jpeg';
+            resolvedBase64 = String(imageUrl).split(',')[1] || '';
+          } else if (/^https?:\/\//i.test(String(imageUrl))) {
+            const imgResp = await fetch(String(imageUrl));
+            if (!imgResp.ok) {
+              throw new Error(`無法讀取反面影像網址 (${imgResp.status})`);
+            }
+            const arrBuf = await imgResp.arrayBuffer();
+            resolvedBase64 = Buffer.from(arrBuf).toString('base64');
+            resolvedMimeType = imgResp.headers.get('content-type') || 'image/jpeg';
+          }
+        }
+
+        if (!resolvedBase64) {
+          return res.status(400).json({ success: false, error: '缺少名片反面影像資料' });
+        }
+
+        let recommendedBackRotation = Number(card?.backRotation || 0);
+        try {
+          const buf = Buffer.from(resolvedBase64, 'base64');
+          const det = detectCardClockwiseRotation(
+            buf,
+            resolvedMimeType,
+            recommendedBackRotation
+          );
+          if (det) {
+            recommendedBackRotation = det.recommendedRotation;
+          }
+        } catch {
+          // keep current rotation if image decode fails
+        }
+
+        const fieldsPropertiesSchema = {
+          prefix: { type: Type.STRING },
+          firstName: { type: Type.STRING },
+          lastName: { type: Type.STRING },
+          title: { type: Type.STRING },
+          company: { type: Type.STRING },
+          department: { type: Type.STRING },
+          industry: { type: Type.STRING },
+          country: { type: Type.STRING },
+          email: { type: Type.STRING },
+          subject: { type: Type.STRING },
+          phone: { type: Type.STRING },
+          fax: { type: Type.STRING },
+          website: { type: Type.STRING },
+          address: { type: Type.STRING },
+          notes: { type: Type.STRING },
+          translations: {
+            type: Type.OBJECT,
+            properties: {
+              title: { type: Type.STRING },
+              company: { type: Type.STRING },
+              department: { type: Type.STRING },
+              industry: { type: Type.STRING },
+              subject: { type: Type.STRING },
+              country: { type: Type.STRING },
+            },
+          },
+        };
+
+        const response = await ai.models.generateContent({
+          model,
+          contents: {
+            parts: [
+              { inlineData: { mimeType: resolvedMimeType, data: resolvedBase64 } },
+              {
+                text: `你是一位專業的雙面名片比對與資料擷取專家。使用者已提供名片「正面」既有資料，現在請分析這張「名片反面」影像（若影像呈現 90/180/270 度旋轉請自動轉正閱讀），完成以下兩項任務：
+
+【正面既有資料】：
+${frontSummary}
+
+【任務一：擷取反面獨立欄位 (backOnly)】：
+1. 僅根據「反面影像肉眼可見文字」填入 \`backOnly\`。反面沒印的欄位請留空字串 ""，嚴禁把正面的資料抄進 \`backOnly\`。
+2. 若反面同時印有英文與中文，\`backOnly\` 主欄位優先填英文，中文填入 \`backOnly.translations\`；若反面只有英文就填主欄位；若反面只有中文，將中文填入主欄位（前端會自動進行雙語升降）。
+3. 若反面印有服務項目、營業項目、分店資訊或統編等非標準欄位文字，整理至 \`backOnly.notes\`（不要寫任何分類建議）。
+4. 國家標準化：台灣一律為 "Taiwan SAR"，中國為 "China Mainland"，香港為 "Hong Kong SAR"，澳門為 "Macau SAR"。
+
+【任務二：判讀正反面關係與差異】：
+請比對【正面既有資料】與【反面可見內容】，精確判斷：
+- \`relationType\`：
+  - \`"bilingual_mirror"\`：正反面是同一人、同一機構、同一職稱的中英（或多語）對照版，或反面僅為Logo/補充地址/服務項目。注意：同一機構或同一職稱的中英文翻譯（例如「北京科技大學」與 "University of Science and Technology Beijing"、「國際長」與 "Dean of International Affairs"）屬於同一實體，請判為 \`"bilingual_mirror"\`！
+  - \`"dual_role_same_person"\`：正反面是同一人、同一機構體系，但正反面印有**實質不同的職稱或兼任頭銜**（例如正面是「教授 Professor」，反面是「人工智慧中心主任 Director of AI Center」；或正面是行政職、反面是學術職）。
+  - \`"different_entity"\`：正反面印有**實質不同的公司／學校機構**（例如一面是某大學、另一面是某私人企業／協會／基金會），或正反面根本是**兩位不同聯絡人**的名片誤放在一起。
+- \`hasDifferentTitle\`：布林值。正反面是否有「非單純翻譯關係」的不同職稱或兼任頭銜？（單純中翻英填 false；實質不同職稱填 true）。
+- \`hasDifferentOrg\`：布林值。正反面是否為「非單純翻譯、非單純上下級系所」的不同機構／公司？（單純中翻英或同校系所填 false；不同學校/公司/協會填 true）。
+- \`hasDifferentPerson\`：布林值。正反面都印有姓名，且明顯不是同一人時填 true（若只是同一人的中文名與英文名對照，請填 false）。
+- \`conflictSummary\`：繁體中文簡短說明正反面的關係或差異重點（例如：「反面為英文版對照資訊」、「反面包含另一兼任職稱：研究中心主任」、「正反面機構不同：正面為臺灣大學，反面為台灣文創學會」）。`,
+              },
+            ],
+          },
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                relationType: {
+                  type: Type.STRING,
+                  enum: ['bilingual_mirror', 'dual_role_same_person', 'different_entity'],
+                },
+                hasDifferentTitle: { type: Type.BOOLEAN },
+                hasDifferentOrg: { type: Type.BOOLEAN },
+                hasDifferentPerson: { type: Type.BOOLEAN },
+                conflictSummary: { type: Type.STRING },
+                backOnly: {
+                  type: Type.OBJECT,
+                  properties: fieldsPropertiesSchema,
+                  required: ['firstName', 'lastName', 'title', 'company', 'notes', 'translations'],
+                },
+              },
+              required: [
+                'relationType',
+                'hasDifferentTitle',
+                'hasDifferentOrg',
+                'hasDifferentPerson',
+                'conflictSummary',
+                'backOnly',
+              ],
+            },
+          },
+        });
+
+        const parsed = response.text ? JSON.parse(response.text) : {};
+        if (parsed.backOnly) {
+          if (parsed.backOnly.country) {
+            parsed.backOnly.country = normalizeCountry(parsed.backOnly.country);
+          }
+          if (parsed.backOnly.translations?.country) {
+            parsed.backOnly.translations.country = normalizeCountry(
+              parsed.backOnly.translations.country
+            );
+          }
+        }
+        return res.json({
+          success: true,
+          result: {
+            relationType: parsed.relationType || 'bilingual_mirror',
+            hasDifferentTitle: Boolean(parsed.hasDifferentTitle),
+            hasDifferentOrg: Boolean(parsed.hasDifferentOrg),
+            hasDifferentPerson: Boolean(parsed.hasDifferentPerson),
+            conflictSummary: parsed.conflictSummary || '',
+            recommendedBackRotation,
+            backOnly: parsed.backOnly || {},
+          },
+        });
+      }
+
+      if (action === 'generateFollowUpEmail') {
+        const { emailOptions } = req.body;
+        const toneMap: Record<string, string> = {
+          business: '正式商務合作與專業問候',
+          academic: '學術交流、高教合作與研究致意',
+          event_followup: '展會/研討會後親切跟進與建立連結'
+        };
+        const langLabel = emailOptions?.language === 'en' ? '專業自然英文 (Professional English)' : '專業繁體中文 (Traditional Chinese)';
+        const selectedTone = toneMap[emailOptions?.tone || 'business'] || toneMap.business;
+
+        const prompt = `請根據以下名片聯絡人資訊，撰寫一封高質感、自然得體、不浮誇的會後跟進開發信 (Follow-up Email)。
+
+【收件人資訊】：
+- 稱謂與姓名：${[card?.prefix, card?.firstName, card?.lastName].filter(Boolean).join(' ') || '對方代表'}
+- 公司/機構：${card?.company || ''} ${card?.translations?.company ? `(${card.translations.company})` : ''}
+- 職稱/部門：${card?.title || ''} ${card?.department ? `/ ${card.department}` : ''}
+- 領域/產業：${card?.subject || card?.industry || ''}
+- 認識場合/來源：${card?.source && card.source !== 'EcoScan' ? card.source : '近期商務/學術交流場合'}
+- 名片簡介與備註：${card?.summary || ''} ${card?.notes ? `/ ${card.notes}` : ''}
+
+【寄件設定】：
+- 語氣風格：${selectedTone}
+- 撰寫語言：${langLabel}
+- 寄件人署名：${emailOptions?.senderName || '[您的姓名]'} ${emailOptions?.senderOrg ? `(${emailOptions.senderOrg})` : ''}
+- 補充背景或目的：${emailOptions?.customContext || '表達很高興認識對方，期待未來保持聯繫並探索合作機會'}
+
+【輸出要求】：
+請回傳 JSON 物件包含 subject (信件主旨) 與 body (信件內文，分段清晰，不需包含多餘說明文字)。`;
+
+        const response = await ai.models.generateContent({
+          model,
+          contents: prompt,
+          config: {
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                subject: { type: Type.STRING },
+                body: { type: Type.STRING }
+              },
+              required: ["subject", "body"]
+            }
+          }
+        });
+
+        const draft = response.text ? JSON.parse(response.text) : { subject: '', body: '' };
+        return res.json({ success: true, draft });
+      }
+
       return res.status(400).json({ success: false, error: "Invalid action" });
     } catch (e: any) { 
       console.error("[SERVER_ERROR] analyze-card:", e);
@@ -858,7 +1508,7 @@ async function startServer() {
       if (!prompt) return res.status(400).json({ success: false, error: "Missing prompt" });
 
       const ai = getAiClient();
-      const model = 'gemini-3.8-flash'; // Use gemini-3.8-flash for intent extraction
+      const model = 'gemini-4-hydrogen';
 
       const response = await ai.models.generateContent({
         model,
@@ -1033,7 +1683,7 @@ async function startServer() {
       if (!prompt) return res.status(400).json({ success: false, error: "Missing prompt" });
       
       const ai = getAiClient();
-      const model = 'gemini-3.8-flash';
+      const model = 'gemini-4-hydrogen';
 
       const config: any = {};
       if (isSearchEnabled) {
@@ -1127,9 +1777,20 @@ async function startServer() {
 
   // --- 8. 解決部署與路徑問題 ---
   if (process.env.NODE_ENV !== 'production') {
-    const { createServer } = await import('vite');
-    const vite = await createServer({ server: { middlewareMode: true }, appType: 'spa' });
-    app.use(vite.middlewares);
+    const vitePromise = import('vite').then(({ createServer }) =>
+      createServer({
+        server: { middlewareMode: true, hmr: false, ws: false },
+        appType: 'spa',
+      })
+    );
+    app.use(async (req, res, next) => {
+      try {
+        const vite = await vitePromise;
+        vite.middlewares(req, res, next);
+      } catch (err) {
+        next(err);
+      }
+    });
   } else {
     const distPath = path.resolve('dist');
     app.use(express.static(distPath));

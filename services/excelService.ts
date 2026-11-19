@@ -1,6 +1,11 @@
 
 import { BusinessCardData, ExportMode } from '../types';
 import { normalizeCountry } from '../utils/countries';
+import {
+    DEFAULT_CARD_SOURCE,
+    selectBestQsEmail,
+    inferCountryFromCard,
+} from '../utils/qsValidation';
 
 // Helper: split string by common separators
 const splitValues = (str: string): string[] => {
@@ -39,15 +44,15 @@ export const createExcelFile = async (dataToExport: BusinessCardData[], mode: Ex
 
     // Helper to format academic row
     const mapAcademicRow = (c: BusinessCardData) => ({
-        'Source': c.source || 'QS Hub Scanner',
+        'Source': (c.source || '').trim() || DEFAULT_CARD_SOURCE,
         'Title': c.prefix || '',
         'First Name': c.firstName || '',
         'Last Name': c.lastName || '',
         'Job Title': c.title || '',
         'Department': c.department || '',
         'Institution': c.company || '',
-        'Country or Territory': normalizeCountry(c.country || c.translations?.country) || '',
-        'Email': selectBestEmail(c.email, 'academic'),
+        'Country or Territory': inferCountryFromCard(c) || normalizeCountry(c.country || c.translations?.country) || '',
+        'Email': selectBestQsEmail(c.email, 'academic') || selectBestEmail(c.email, 'academic'),
         'Subject': c.subject || '',
         'Phone (Optional)': selectSinglePhone(c.phone),
         'Fax (Optional)': selectSinglePhone(c.fax || '')
@@ -55,47 +60,70 @@ export const createExcelFile = async (dataToExport: BusinessCardData[], mode: Ex
 
     // Helper to format employer row
     const mapEmployerRow = (c: BusinessCardData) => ({
-        'Source': c.source || 'QS Hub Scanner',
+        'Source': (c.source || '').trim() || DEFAULT_CARD_SOURCE,
         'Title': c.prefix || '',
         'First Name': c.firstName || '',
         'Last Name': c.lastName || '',
         'Position': c.title || '',
         'Industry': c.industry || '',
         'Company Name': c.company || '',
-        'Country or Territory': normalizeCountry(c.country || c.translations?.country) || '',
-        'Email': selectBestEmail(c.email, c.category || 'employer'),
+        'Country or Territory': inferCountryFromCard(c) || normalizeCountry(c.country || c.translations?.country) || '',
+        'Email': selectBestQsEmail(c.email, c.category || 'employer') || selectBestEmail(c.email, c.category || 'employer'),
         'Phone (Optional)': selectSinglePhone(c.phone),
         'Fax (Optional)': selectSinglePhone(c.fax || '')
     });
 
     // Helper to format staff row
     const mapStaffRow = (c: BusinessCardData) => ({
-        'Source': c.source || 'QS Hub Scanner',
+        'Source': (c.source || '').trim() || DEFAULT_CARD_SOURCE,
         'Title': c.prefix || '',
         'First Name': c.firstName || '',
         'Last Name': c.lastName || '',
         'Position': c.title || '',
         'Department': c.department || '',
         'Institution / Company': c.company || '',
-        'Country or Territory': normalizeCountry(c.country || c.translations?.country) || '',
-        'Email': selectBestEmail(c.email, 'staff'),
+        'Country or Territory': inferCountryFromCard(c) || normalizeCountry(c.country || c.translations?.country) || '',
+        'Email': selectBestQsEmail(c.email, 'staff') || selectBestEmail(c.email, 'staff'),
         'Phone (Optional)': selectSinglePhone(c.phone),
         'Fax (Optional)': selectSinglePhone(c.fax || '')
     });
 
-    if (mode === 'selected_qs') {
-        // Multi-sheet QS export for selected contacts
-        const employers = dataToExport.filter(c => c.category === 'employer' || c.category === 'other');
+    if (mode === 'qs_ready_all') {
         const academics = dataToExport.filter(c => c.category === 'academic');
-        const staff = dataToExport.filter(c => c.category === 'staff');
+        const employers = dataToExport.filter(c => c.category === 'employer');
 
+        if (academics.length > 0) {
+            const wsAcademic = XLSX.utils.json_to_sheet(academics.map(mapAcademicRow));
+            XLSX.utils.book_append_sheet(wb, wsAcademic, "QS_Academic");
+        }
         if (employers.length > 0) {
             const wsEmployer = XLSX.utils.json_to_sheet(employers.map(mapEmployerRow));
             XLSX.utils.book_append_sheet(wb, wsEmployer, "QS_Employer");
         }
+        if (academics.length === 0 && employers.length === 0) {
+            const wsEmpty = XLSX.utils.json_to_sheet([]);
+            XLSX.utils.book_append_sheet(wb, wsEmpty, "QS_Upload");
+        }
+
+        const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+        const blob = new Blob([excelBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const name = `QS_Hub_Upload_FO_GUANG_UNIVERSITY_${new Date().toISOString().split('T')[0]}.xlsx`;
+        return new File([blob], name, { type: blob.type });
+    }
+
+    if (mode === 'selected_qs') {
+        // Multi-sheet QS export for selected contacts (never mix 'other' into QS_Employer)
+        const employers = dataToExport.filter(c => c.category === 'employer');
+        const academics = dataToExport.filter(c => c.category === 'academic');
+        const staff = dataToExport.filter(c => c.category === 'staff');
+
         if (academics.length > 0) {
             const wsAcademic = XLSX.utils.json_to_sheet(academics.map(mapAcademicRow));
             XLSX.utils.book_append_sheet(wb, wsAcademic, "QS_Academic");
+        }
+        if (employers.length > 0) {
+            const wsEmployer = XLSX.utils.json_to_sheet(employers.map(mapEmployerRow));
+            XLSX.utils.book_append_sheet(wb, wsEmployer, "QS_Employer");
         }
         if (staff.length > 0) {
             const wsStaff = XLSX.utils.json_to_sheet(staff.map(mapStaffRow));
@@ -117,6 +145,8 @@ export const createExcelFile = async (dataToExport: BusinessCardData[], mode: Ex
             'Phone': c.phone || '',
             'Fax': c.fax || '',
             'Subject': c.subject || '',
+            'Source': c.source || '',
+            'Tags': (c.tags || []).join(', '),
             'Notes': c.notes || '',
             'Summary': c.summary || ''
         }));
@@ -161,7 +191,7 @@ export const createExcelFile = async (dataToExport: BusinessCardData[], mode: Ex
 
     if (mode === 'selected_csv') {
         const allRows = dataToExport.map(c => ({
-            'Source': c.source || 'QS Hub Scanner',
+            'Source': (c.source || '').trim() || DEFAULT_CARD_SOURCE,
             'Category': c.category === 'other' ? 'Not QS' : c.category,
             'Title': c.prefix || '',
             'First Name': c.firstName || '',
@@ -174,7 +204,8 @@ export const createExcelFile = async (dataToExport: BusinessCardData[], mode: Ex
             'Email': selectBestEmail(c.email, c.category),
             'Subject': c.subject || '',
             'Phone': selectSinglePhone(c.phone),
-            'Fax': selectSinglePhone(c.fax || '')
+            'Fax': selectSinglePhone(c.fax || ''),
+            'Tags': (c.tags || []).join(', ')
         }));
         const ws = XLSX.utils.json_to_sheet(allRows);
         XLSX.utils.book_append_sheet(wb, ws, "QS_Selected");
@@ -193,30 +224,31 @@ export const createExcelFile = async (dataToExport: BusinessCardData[], mode: Ex
             'First Name': c.firstName, 'Last Name': c.lastName, 'Title': c.title, 'Title (Trans)': c.translations?.title || '',
             'Company': c.company, 'Company (Trans)': c.translations?.company || '', 'Department': c.department, 'Department (Trans)': c.translations?.department || '',
             'Industry': c.industry, 'Email': c.email, 'Phone': c.phone, 'Fax': c.fax || '', 'Website': c.website, 'Address': c.address, 'Country': c.country,
-            'Subject': c.subject, 'Category': c.category === 'other' ? 'Not QS' : c.category, 'Summary': c.summary || '', 'Reasoning': c.reasoning, 'Notes': c.notes || '', 'Scan Date': formatDate(c.scannedAt), 'Source': c.source
+            'Subject': c.subject, 'Category': c.category === 'other' ? 'Not QS' : c.category, 'Tags': (c.tags || []).join(', '), 'Summary': c.summary || '', 'Reasoning': c.reasoning, 'Notes': c.notes || '', 'Scan Date': formatDate(c.scannedAt), 'Source': c.source
         }));
     } else if (mode === 'full_backup' || mode === 'csv') {
-        // Full Backup includes Image Base64 for restoration and ALL data
         exportData = dataToExport.map(c => ({
             'SYSTEM_ID': c.id, 'scannedAt': c.scannedAt, 'category': c.category, 'source': c.source,
+            'tags': (c.tags || []).join(', '),
             'firstName': c.firstName, 'lastName': c.lastName, 'prefix': c.prefix, 'title': c.title, 'company': c.company,
             'department': c.department, 'industry': c.industry, 'country': c.country, 
-            'email': c.email, // Keep original full string
-            'phone': c.phone, // Keep original full string
+            'email': c.email,
+            'phone': c.phone,
             'fax': c.fax || '', 
             'subject': c.subject, 'website': c.website, 'address': c.address, 
             'summary': c.summary || '', 'reasoning': c.reasoning,
             'notes': c.notes || '',
             'trans_title': c.translations?.title || '', 'trans_company': c.translations?.company || '', 'trans_dept': c.translations?.department || '',
             'trans_ind': c.translations?.industry || '', 'trans_subj': c.translations?.subject || '', 'trans_ctry': c.translations?.country || '',
-            'Image URL': c.imageUrl 
+            'Image URL': c.imageUrl,
+            'Back Image URL': c.backImageUrl || ''
         }));
     } else if (mode === 'all_clean') {
         exportData = dataToExport.map(c => ({
             'Category': c.category === 'other' ? 'Not QS' : c.category, 'First Name': c.firstName, 'Last Name': c.lastName, 'Title': c.title, 'Company': c.company,
             'Department': c.department, 'Industry': c.industry, 'Subject': c.subject, 'Email': c.email, 'Phone': c.phone, 'Fax': c.fax || '',
-            'Website': c.website, 'Address': c.address, 'Country': c.country, 'Summary': c.summary || '', 'Notes': c.notes || '', 'Scan Date': formatDate(c.scannedAt),
-            'Image URL': c.imageUrl
+            'Website': c.website, 'Address': c.address, 'Country': c.country, 'Source': c.source || '', 'Tags': (c.tags || []).join(', '), 'Summary': c.summary || '', 'Notes': c.notes || '', 'Scan Date': formatDate(c.scannedAt),
+            'Image URL': c.imageUrl, 'Back Image URL': c.backImageUrl || ''
         }));
     } else if (mode === 'all_original') {
         exportData = dataToExport.map(c => ({

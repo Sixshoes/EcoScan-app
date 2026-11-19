@@ -31,23 +31,28 @@ export const CardThumbnail: React.FC<CardThumbnailProps> = React.memo(({
   }[size];
 
   const categoryBg = 
-    card.category === 'academic' ? 'bg-amber-400' :
-    card.category === 'staff' ? 'bg-emerald-500' :
-    card.category === 'other' ? 'bg-slate-400' :
-    'bg-blue-500';
+    card.category === 'academic' ? 'bg-amber-600' :
+    card.category === 'staff' ? 'bg-emerald-600' :
+    card.category === 'other' ? 'bg-slate-500' :
+    'bg-indigo-600';
 
   const initialText = 
     card.lastName ? card.lastName.charAt(0) :
     card.firstName ? card.firstName.charAt(0) :
     card.company ? card.company.charAt(0).toUpperCase() : '?';
 
-  const rotation = rotate && card.rotation ? card.rotation : 0;
+  const normalizedRot = rotate && card.rotation ? ((card.rotation % 360) + 360) % 360 : 0;
+  const rotationClass =
+    normalizedRot === 90 ? 'rotate-90' :
+    normalizedRot === 180 ? 'rotate-180' :
+    normalizedRot === 270 ? '-rotate-90' :
+    '';
 
   const showImage = Boolean(card.imageUrl && !hasError);
 
   return (
     <div 
-      className={`relative rounded-lg flex items-center justify-center font-bold text-white shadow-xs overflow-hidden border border-slate-200/60 select-none shrink-0 ${categoryBg} ${sizeClasses} ${className}`}
+      className={`relative rounded-lg flex items-center justify-center font-semibold text-white overflow-hidden border border-slate-200 select-none shrink-0 ${showImage && isLoaded ? 'bg-slate-100' : categoryBg} ${sizeClasses} ${className}`}
     >
       {showImage && (
         <img
@@ -58,8 +63,7 @@ export const CardThumbnail: React.FC<CardThumbnailProps> = React.memo(({
           referrerPolicy="no-referrer"
           onError={() => setHasError(true)}
           onLoad={() => setIsLoaded(true)}
-          className={`w-full h-full object-contain transition-all duration-200 ${isLoaded ? 'opacity-100' : 'opacity-0'}`}
-          style={rotation ? { transform: `rotate(${rotation}deg)` } : undefined}
+          className={`w-full h-full object-contain transition-all duration-200 ${rotationClass} ${isLoaded ? 'opacity-100' : 'opacity-0'}`}
         />
       )}
 

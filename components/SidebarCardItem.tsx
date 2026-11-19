@@ -1,4 +1,5 @@
 import React from 'react';
+import { Cloud, CheckCircle2, HardDrive, Trash2, FlipHorizontal2 } from 'lucide-react';
 import { BusinessCardData } from '../types';
 import { CardThumbnail } from './CardThumbnail';
 import { normalizeCountry } from '../utils/countries';
@@ -13,122 +14,141 @@ interface SidebarCardItemProps {
   onDelete: (e: React.MouseEvent, id: string) => void;
 }
 
-export const SidebarCardItem: React.FC<SidebarCardItemProps> = React.memo(({
-  card,
-  isSelected,
-  isQsChecked,
-  isDuplicate,
-  onSelect,
-  onToggleQs,
-  onDelete
-}) => {
-  const displayName = (card.firstName || card.lastName)
-    ? `${card.firstName || ''} ${card.lastName || ''}`.trim()
-    : (card.company || '未知名片');
+const CATEGORY_LABEL: Record<BusinessCardData['category'], string> = {
+  employer: '雇主',
+  academic: '學者',
+  staff: '職員',
+  other: '一般',
+};
 
-  const displaySubtitle = (card.firstName || card.lastName)
-    ? (card.company || '個人名片')
-    : (card.category === 'other' ? 'General Card (Not QS)' : (card.title || card.category || ''));
+const CATEGORY_TEXT_CLS: Record<BusinessCardData['category'], string> = {
+  employer: 'text-blue-700',
+  academic: 'text-amber-700',
+  staff: 'text-emerald-700',
+  other: 'text-slate-600',
+};
 
-  const countryText = card.country || card.translations?.country;
+export const SidebarCardItem: React.FC<SidebarCardItemProps> = React.memo(
+  ({ card, isSelected, isQsChecked, isDuplicate, onSelect, onToggleQs, onDelete }) => {
+    const displayName =
+      card.firstName || card.lastName
+        ? `${card.firstName || ''} ${card.lastName || ''}`.trim()
+        : card.company || '未知名片';
 
-  return (
-    <div 
-      id={`card-list-item-${card.id}`}
-      onClick={() => onSelect(card.id)}
-      className={`group flex items-center gap-2.5 p-2 rounded-xl cursor-pointer transition-all border relative overflow-hidden select-none ${
-        isSelected 
-          ? 'bg-white border-indigo-500 shadow-lg shadow-indigo-50 ring-1 ring-indigo-500/20' 
-          : isQsChecked
+    const companyOrTitle =
+      card.firstName || card.lastName
+        ? card.company || card.title || '個人聯絡人'
+        : card.title || '未填寫職稱';
+
+    const countryText = card.country || card.translations?.country;
+    const normalizedCountry = countryText ? normalizeCountry(countryText) : '';
+
+    return (
+      <div
+        id={`card-list-item-${card.id}`}
+        onClick={() => onSelect(card.id)}
+        className={`group flex items-center gap-3 px-3 py-2.5 rounded-xl cursor-pointer transition-colors border select-none ${
+          isSelected
+            ? 'bg-indigo-50/75 border-indigo-500 ring-1 ring-indigo-500/20'
+            : isQsChecked
             ? 'bg-indigo-50/40 border-indigo-300'
-            : 'bg-white border-slate-200 hover:border-indigo-300 hover:shadow-xs'
-      }`}
-    >
-      {/* Checkbox for QS Selection */}
-      <div 
-        className="flex items-center justify-center shrink-0 z-10 p-1 -m-1" 
-        onClick={(e) => {
-          e.stopPropagation();
-          onToggleQs(card.id);
-        }}
+            : 'bg-white border-slate-200 hover:border-slate-300 hover:bg-slate-50/80'
+        }`}
       >
-        <input
-          type="checkbox"
-          checked={isQsChecked}
-          onChange={() => onToggleQs(card.id)}
-          className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
-          title="勾選此名片至 QS 聯絡人名單"
-        />
-      </div>
-
-      {/* Sync Status Badge */}
-      <div 
-        className={`absolute top-0 right-0 w-0 h-0 border-t-[18px] border-r-[18px] border-r-transparent ${
-          card.syncStatus === 'notion' ? 'border-t-emerald-500' : 
-          card.syncStatus === 'firebase' ? 'border-t-blue-400' : 'border-t-amber-400'
-        }`} 
-        title={
-          card.syncStatus === 'notion' ? '已同步到 Notion' : 
-          card.syncStatus === 'firebase' ? '圖片已在雲端' : '僅儲存在本地'
-        }
-      >
-        <i className={`fa-solid absolute -top-[17px] right-[1px] text-[7px] text-white ${
-          card.syncStatus === 'notion' ? 'fa-check-double' : 
-          card.syncStatus === 'firebase' ? 'fa-cloud' : 'fa-database'
-        }`}></i>
-      </div>
-      
-      {/* Thumbnail */}
-      <CardThumbnail card={card} size="lg" className="rounded-lg shadow-2xs" />
-
-      {/* Info */}
-      <div className="flex-1 min-w-0 pr-1">
-        <div className="text-xs md:text-sm font-bold text-slate-800 truncate flex items-center gap-1.5">
-          <span className="truncate">{displayName}</span>
-          {isDuplicate && (
-            <span className="text-[9px] px-1.5 py-0.2 rounded font-bold whitespace-nowrap bg-rose-50 text-rose-600 border border-rose-100 flex items-center gap-0.5 shrink-0">
-              <i className="fa-solid fa-clone text-[8px]"></i>重複
-            </span>
-          )}
-          {card.syncStatus !== 'notion' && (
-            <span className={`text-[8px] px-1 py-0.2 rounded font-bold whitespace-nowrap hidden lg:inline-block shrink-0 ${
-              card.syncStatus === 'firebase' ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-700'
-            }`}>
-              {card.syncStatus === 'firebase' ? '已備份' : '新建立'}
-            </span>
-          )}
+        {/* Checkbox for Multi-Select / QS */}
+        <div
+          className="flex items-center justify-center shrink-0 p-1.5 -m-1.5"
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleQs(card.id);
+          }}
+        >
+          <input
+            type="checkbox"
+            checked={isQsChecked}
+            onChange={() => onToggleQs(card.id)}
+            className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
+            title="勾選名片進行批次編輯或 QS 匯出"
+          />
         </div>
 
-        <div className="text-[11px] font-medium text-slate-400 uppercase tracking-wide truncate flex items-center gap-1.5 mt-0.5">
-          <span className="truncate">{displaySubtitle}</span>
-          <span className={`text-[9px] px-1.5 py-0.2 rounded font-black shrink-0 border ${
-            card.category === 'academic' ? 'bg-amber-50 text-amber-700 border-amber-200' :
-            card.category === 'staff' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-            card.category === 'other' ? 'bg-slate-100 text-slate-600 border-slate-200' :
-            'bg-blue-50 text-blue-700 border-blue-200'
-          }`}>
-            {card.category === 'employer' ? '雇主' : card.category === 'academic' ? '學者' : card.category === 'staff' ? '職員' : '非QS'}
+        {/* Thumbnail */}
+        <CardThumbnail card={card} size="md" className="rounded-md" />
+
+        {/* Metadata */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className="text-[15px] font-bold text-slate-900 truncate leading-snug">
+              {displayName}
+            </span>
+            {card.backImageUrl && (
+              <span title="含雙面名片影像" className="text-slate-500 shrink-0">
+                <FlipHorizontal2 className="w-3.5 h-3.5" />
+              </span>
+            )}
+            {isDuplicate && (
+              <span className="text-xs font-bold text-amber-700 shrink-0">· 重複</span>
+            )}
+          </div>
+
+          <div className="text-[13px] text-slate-600 truncate flex items-center gap-1.5 mt-0.5 leading-snug">
+            <span
+              className={`font-semibold shrink-0 ${CATEGORY_TEXT_CLS[card.category || 'employer']}`}
+            >
+              {CATEGORY_LABEL[card.category || 'employer']}
+            </span>
+            <span className="text-slate-400">·</span>
+            <span className="truncate">{companyOrTitle}</span>
+            {normalizedCountry && (
+              <>
+                <span className="text-slate-400 shrink-0">·</span>
+                <span className="truncate text-slate-600 shrink-0 max-w-[96px]">
+                  {normalizedCountry}
+                </span>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Sync Status & Delete Action */}
+        <div className="flex items-center gap-1 shrink-0">
+          <span
+            className="w-7 h-7 flex items-center justify-center"
+            title={
+              card.syncStatus === 'notion'
+                ? card.notionUnsyncedChanges
+                  ? '本地有變更待同步至 Notion'
+                  : '已同步至 Notion'
+                : card.syncStatus === 'firebase'
+                ? '影像已備份至雲端'
+                : '儲存在本機瀏覽器'
+            }
+          >
+            {card.syncStatus === 'notion' ? (
+              <CheckCircle2
+                className={`w-4 h-4 ${
+                  card.notionUnsyncedChanges ? 'text-amber-500' : 'text-emerald-600'
+                }`}
+              />
+            ) : card.syncStatus === 'firebase' ? (
+              <Cloud className="w-4 h-4 text-sky-600" />
+            ) : (
+              <HardDrive className="w-4 h-4 text-slate-400" />
+            )}
           </span>
-          {countryText && (
-            <span className="text-[9px] text-slate-500 bg-slate-100 px-1 py-0.5 rounded font-normal shrink-0 flex items-center gap-0.5 max-w-[80px] truncate">
-              <i className="fa-solid fa-earth-americas text-[8px] text-indigo-400"></i>
-              <span className="truncate">{normalizeCountry(countryText)}</span>
-            </span>
-          )}
+
+          <button
+            type="button"
+            onClick={(e) => onDelete(e, card.id)}
+            className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-500 hover:bg-rose-50 hover:text-rose-600 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
+            title="刪除名片"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
         </div>
       </div>
-
-      {/* Delete Button */}
-      <button 
-        type="button"
-        onClick={(e) => onDelete(e, card.id)} 
-        className="w-7 h-7 flex items-center justify-center rounded-lg text-slate-300 hover:bg-red-50 hover:text-red-500 opacity-80 md:opacity-0 group-hover:opacity-100 transition-all z-10 shrink-0 cursor-pointer" 
-        title="刪除名片"
-      >
-        <i className="fa-solid fa-trash-can text-xs"></i>
-      </button>
-    </div>
-  );
-});
+    );
+  }
+);
 
 SidebarCardItem.displayName = 'SidebarCardItem';

@@ -1,4 +1,3 @@
-
 import React from 'react';
 
 interface EditableFieldProps {
@@ -6,7 +5,7 @@ interface EditableFieldProps {
   value: string;
   onChange: (value: string) => void;
   onBlur?: () => void;
-  icon?: string;
+  icon?: React.ReactNode;
   className?: string;
   isTextArea?: boolean;
   translation?: string;
@@ -14,61 +13,82 @@ interface EditableFieldProps {
   placeholder?: string;
 }
 
-const EditableField = React.memo(({ label, value, onChange, onBlur, icon, className, isTextArea, translation, options, placeholder }: EditableFieldProps) => {
-  const datalistId = options && options.length > 0 ? `list-${label.replace(/[^a-zA-Z0-9]/g, '_')}` : undefined;
+const EditableField = React.memo(
+  ({
+    label,
+    value,
+    onChange,
+    onBlur,
+    icon,
+    className,
+    isTextArea,
+    translation,
+    options,
+    placeholder,
+  }: EditableFieldProps) => {
+    const datalistId =
+      options && options.length > 0
+        ? `list-${label.replace(/[^a-zA-Z0-9]/g, '_')}`
+        : undefined;
 
-  return (
-    <div className={`group flex flex-col h-full ${className || ''}`}>
-        <div className="flex items-center justify-between mb-1.5">
-            <label className="text-xs font-bold text-slate-400 uppercase tracking-widest flex items-center gap-1.5 shrink-0">
-                {icon && <i className={`fa-solid ${icon} text-indigo-400`}></i>} {label}
-            </label>
-            {translation && value !== translation && (
-                <div className="flex items-center gap-1 bg-indigo-50 px-1.5 py-0.5 rounded border border-indigo-100 max-w-[50%] animate-fadeIn">
-                    <span className="text-[9px] text-white font-bold bg-indigo-400 px-1 rounded leading-none">AI</span>
-                    <span className="text-xs text-indigo-600 font-medium truncate" title={translation}>{translation}</span>
-                </div>
-            )}
+    return (
+      <div className={`group flex flex-col h-full ${className || ''}`}>
+        <div className="flex items-center justify-between gap-2 mb-1.5">
+          <label className="text-sm font-semibold text-slate-800 flex items-center gap-1.5 shrink-0">
+            {icon && <span className="text-slate-500 flex items-center">{icon}</span>}
+            <span>{label}</span>
+          </label>
+          {translation && value !== translation && (
+            <span
+              className="text-xs text-indigo-700 bg-indigo-50/80 border border-indigo-200/70 px-2 py-0.5 rounded font-medium truncate max-w-[55%]"
+              title={`英譯參考：${translation}`}
+            >
+              英譯：{translation}
+            </span>
+          )}
         </div>
         <div className="relative flex-1">
-            {isTextArea ? (
-                <textarea 
-                    value={value || ''} 
-                    onChange={e => onChange(e.target.value)}
-                    onBlur={onBlur}
-                    placeholder={placeholder}
-                    className="w-full h-20 p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium text-slate-700 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all resize-none leading-relaxed"
-                />
-            ) : (
-                <>
-                  <input 
-                      type="text"
-                      list={datalistId}
-                      value={value || ''} 
-                      onChange={e => onChange(e.target.value)}
-                      onBlur={onBlur}
-                      placeholder={placeholder}
-                      className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-sm font-medium text-slate-700 focus:bg-white focus:outline-none focus:ring-1 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
-                  />
-                  {datalistId && options && (
-                    <datalist id={datalistId}>
-                      {options.map((opt, idx) => {
-                        const isObj = typeof opt === 'object';
-                        const val = isObj ? opt.value : opt;
-                        const label = isObj ? opt.label : opt;
-                        return (
-                          <option key={`${val}_${idx}`} value={val} label={label}>
-                            {label}
-                          </option>
-                        );
-                      })}
-                    </datalist>
-                  )}
-                </>
-            )}
+          {isTextArea ? (
+            <textarea
+              value={value || ''}
+              onChange={(e) => onChange(e.target.value)}
+              onBlur={onBlur}
+              placeholder={placeholder}
+              className="w-full h-24 px-3.5 py-2.5 bg-white border border-slate-300 hover:border-slate-400 rounded-lg text-[15px] text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 transition-colors resize-none leading-relaxed"
+            />
+          ) : (
+            <>
+              <input
+                type="text"
+                list={datalistId}
+                value={value || ''}
+                onChange={(e) => onChange(e.target.value)}
+                onBlur={onBlur}
+                placeholder={placeholder}
+                className="w-full px-3.5 py-2.5 bg-white border border-slate-300 hover:border-slate-400 rounded-lg text-[15px] text-slate-900 placeholder:text-slate-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 transition-colors"
+              />
+              {datalistId && options && (
+                <datalist id={datalistId}>
+                  {options.map((opt, idx) => {
+                    const isObj = typeof opt === 'object';
+                    const val = isObj ? opt.value : opt;
+                    const optLabel = isObj ? opt.label : opt;
+                    return (
+                      <option key={`${val}_${idx}`} value={val} label={optLabel}>
+                        {optLabel}
+                      </option>
+                    );
+                  })}
+                </datalist>
+              )}
+            </>
+          )}
         </div>
-    </div>
-  );
-});
+      </div>
+    );
+  }
+);
+
+EditableField.displayName = 'EditableField';
 
 export default EditableField;

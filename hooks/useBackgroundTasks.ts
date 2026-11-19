@@ -1,8 +1,7 @@
-
-import { useState, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import { BusinessCardData } from '../types';
 import { generateBatchSummaries } from '../services/geminiService';
-import { saveCardToDB } from '../services/dbService';
+import { saveAllCardsToDB } from '../services/dbService';
 
 export const useBackgroundTasks = (
   setCards: React.Dispatch<React.SetStateAction<BusinessCardData[]>>,
@@ -10,42 +9,62 @@ export const useBackgroundTasks = (
 ) => {
   const [bgTaskCount, setBgTaskCount] = useState(0);
 
-  const runBackgroundSummaryCheck = useCallback(async (cardsToCheck: BusinessCardData[]) => {
-    const missingSummary = cardsToCheck.filter(c => !c.summary || String(c.summary).trim() === '');
-    
-    if (missingSummary.length > 0) {
-        console.log(`Found ${missingSummary.length} cards without summary. Auto-generating in background (Batch Mode)...`);
+  const runBackgroundSummaryCheck = useCallback(
+    async (cardsToCheck: BusinessCardData[]) => {
+      const missingSummary = cardsToCheck.filter(
+        (c) => !c.summary || String(c.summary).trim() === ''
+      );
+
+      if (missingSummary.length > 0) {
         setBgTaskCount(missingSummary.length);
 
         const chunkSize = 5;
         const process = async () => {
-             for (let i = 0; i < missingSummary.length; i += chunkSize) {
-                const chunk = missingSummary.slice(i, i + chunkSize);
-                try {
-                    const summaries = await generateBatchSummaries(chunk);
-                    for (const result of summaries) {
-                        const originalCard = chunk.find(c => c.id === result.id);
-                        if (originalCard && result.summary) {
-                            const updatedCard = { ...originalCard, summary: result.summary };
-                            await saveCardToDB(updatedCard);
-                            setCards(prev => prev.map(c => c.id === updatedCard.id ? { ...c, summary: result.summary } : c));
-                            setFormData(prev => prev && prev.id === updatedCard.id ? { ...prev, summary: result.summary } : prev);
-                        }
-                    }
-                    await new Promise(r => setTimeout(r, 1000));
-                } catch (e) {
-                    console.warn(`Failed to process batch summary chunk`, e);
-                } finally {
-                    setBgTaskCount(prev => Math.max(0, prev - chunk.length));
+          for (let i = 0; i < missingSummary.length; i += chunkSize) {
+            const chunk = missingSummary.slice(i, i + chunkSize);
+            try {
+              const summaries = await generateBatchSummaries(chunk);
+              const updatedBatch: BusinessCardData[] = [];
+              const summaryMap = new Map<string, string>();
+
+              for (const result of summaries) {
+                const originalCard = chunk.find((c) => c.id === result.id);
+                if (originalCard && result.summary) {
+                  updatedBatch.push({ ...originalCard, summary: result.summary });
+                  summaryMap.set(originalCard.id, result.summary);
                 }
+              }
+
+              if (updatedBatch.length > 0) {
+                await saveAllCardsToDB(updatedBatch);
+                setCards((prev) =>
+                  prev.map((c) =>
+                    summaryMap.has(c.id) ? { ...c, summary: summaryMap.get(c.id)! } : c
+                  )
+                );
+                setFormData((prev) =>
+                  prev && summaryMap.has(prev.id)
+                    ? { ...prev, summary: summaryMap.get(prev.id)! }
+                    : prev
+                );
+              }
+
+              await new Promise((r) => setTimeout(r, 800));
+            } catch (e) {
+              console.warn('Failed to process batch summary chunk', e);
+            } finally {
+              setBgTaskCount((prev) => Math.max(0, prev - chunk.length));
             }
+          }
         };
         process();
-    }
-  }, [setCards, setFormData]);
+      }
+    },
+    [setCards, setFormData]
+  );
 
   return {
     bgTaskCount,
-    runBackgroundSummaryCheck
+    runBackgroundSummaryCheck,
   };
 };

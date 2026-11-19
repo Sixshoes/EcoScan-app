@@ -5,6 +5,11 @@ import { compressImage } from '../../utils/imageUtils';
 import { extractCardInfo } from '../../services/geminiService';
 import { uploadImageAsset } from '../../utils/firebase';
 import { saveCardToDB, deleteCardFromDB } from '../../services/dbService';
+import {
+  DEFAULT_CARD_SOURCE,
+  inferCountryFromCard,
+  auditCardQsCategory,
+} from '../../utils/qsValidation';
 
 export const useScanPipeline = (
   cardsRef: React.MutableRefObject<BusinessCardData[]>,
@@ -44,22 +49,34 @@ export const useScanPipeline = (
             if (action === 'skip') {
                 setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: 'completed', progress: 100 } : t));
                 filesMap.current.delete(task.id);
-                setTimeout(() => setTasks(prev => prev.filter(t => t.id !== task.id)), 1500);
+                setTimeout(() => {
+                    if (task.previewUrl) URL.revokeObjectURL(task.previewUrl);
+                    setTasks(prev => prev.filter(t => t.id !== task.id));
+                }, 1500);
                 return;
             }
         }
 
         const processWithTimeout = async () => {
             const base64Data = await compressImage(fileObj);
-            const info = await extractCardInfo(base64Data, 'image/jpeg');
-            return { base64Data, info };
+            const [info, uprightRes] = await Promise.all([
+              extractCardInfo(base64Data, 'image/jpeg'),
+              fetch('/api/cards/auto-upright', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ base64: base64Data, mimeType: 'image/jpeg' }),
+              })
+                .then((r) => r.json())
+                .catch(() => ({ rotation: 0 })),
+            ]);
+            return { base64Data, info, autoRotation: Number(uprightRes?.rotation || 0) };
         };
 
-        const timeoutPromise = new Promise<{base64Data: string, info: any}>((_, reject) => 
+        const timeoutPromise = new Promise<{base64Data: string, info: any, autoRotation: number}>((_, reject) => 
             setTimeout(() => reject(new Error("Timeout (45s)")), 45000)
         );
 
-        const { base64Data, info } = await Promise.race([processWithTimeout(), timeoutPromise]);
+        const { base64Data, info, autoRotation } = await Promise.race([processWithTimeout(), timeoutPromise]);
 
         let imageUrl = `data:image/jpeg;base64,${base64Data}`;
         let imageId: string | undefined = undefined;
@@ -71,7 +88,7 @@ export const useScanPipeline = (
             console.error("Firebase upload failed during scan", e);
         }
 
-        const newCard: BusinessCardData = {
+        const draftCard: BusinessCardData = {
             notes: '',
             prefix: '',
             fax: '',
@@ -80,13 +97,25 @@ export const useScanPipeline = (
             ...info,
             id: task.id,
             scannedAt: Date.now(),
-            source: 'EcoScan',
+            source: DEFAULT_CARD_SOURCE,
+            rotation: autoRotation,
             imageUrl: imageUrl,
             imageId: imageId,
             originalFileName: (fileObj as any).name,
             originalFileSize: fileObj.size,
-            syncStatus: imageUrl.startsWith('http') ? 'firebase' : 'local', // Set sync status
+            syncStatus: imageUrl.startsWith('http') ? 'firebase' : 'local',
         };
+
+        const inferredCtry = inferCountryFromCard(draftCard);
+        if (inferredCtry && !draftCard.country) {
+            draftCard.country = inferredCtry;
+        }
+        const qsAudit = auditCardQsCategory(draftCard);
+        if (qsAudit.hasError) {
+            draftCard.category = qsAudit.suggestedCategory;
+        }
+
+        const newCard: BusinessCardData = draftCard;
 
         // Robust similarity / duplicate check
         let similarityReason = "";
@@ -149,7 +178,10 @@ export const useScanPipeline = (
             if (action === 'discard') {
                 setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: 'completed', progress: 100 } : t));
                 filesMap.current.delete(task.id);
-                setTimeout(() => setTasks(prev => prev.filter(t => t.id !== task.id)), 1500);
+                setTimeout(() => {
+                    if (task.previewUrl) URL.revokeObjectURL(task.previewUrl);
+                    setTasks(prev => prev.filter(t => t.id !== task.id));
+                }, 1500);
                 return;
             } else if (action === 'replace') {
                 await deleteCardFromDB(duplicate.id);
@@ -161,7 +193,10 @@ export const useScanPipeline = (
         setCards(prev => [newCard, ...prev].sort((a,b) => b.scannedAt - a.scannedAt));
         setTasks(prev => prev.map(t => t.id === task.id ? { ...t, status: 'completed', progress: 100 } : t));
         filesMap.current.delete(task.id);
-        setTimeout(() => setTasks(prev => prev.filter(t => t.id !== task.id)), 1500);
+        setTimeout(() => {
+            if (task.previewUrl) URL.revokeObjectURL(task.previewUrl);
+            setTasks(prev => prev.filter(t => t.id !== task.id));
+        }, 1500);
 
     } catch (err: any) {
         console.error(`Task ${task.id} Failed:`, err);

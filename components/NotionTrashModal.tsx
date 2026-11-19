@@ -1,4 +1,14 @@
 import React, { useState, useEffect } from 'react';
+import {
+  Archive,
+  RotateCcw,
+  Check,
+  X,
+  Loader2,
+  AlertTriangle,
+  RefreshCw,
+  CloudDownload,
+} from 'lucide-react';
 import { BusinessCardData } from '../types';
 import { CardThumbnail } from './CardThumbnail';
 import { saveAllCardsToDB } from '../services/dbService';
@@ -15,7 +25,7 @@ export const NotionTrashModal: React.FC<NotionTrashModalProps> = ({
   isOpen,
   onClose,
   onRestoredCards,
-  onLoadAllFromNotion
+  onLoadAllFromNotion,
 }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
@@ -49,7 +59,7 @@ export const NotionTrashModal: React.FC<NotionTrashModalProps> = ({
   }, [isOpen]);
 
   const handleToggleSelect = (id: string) => {
-    setSelectedIds(prev => {
+    setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -61,7 +71,7 @@ export const NotionTrashModal: React.FC<NotionTrashModalProps> = ({
     if (selectedIds.size === archivedCards.length) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(archivedCards.map(c => c.id)));
+      setSelectedIds(new Set(archivedCards.map((c) => c.id)));
     }
   };
 
@@ -74,33 +84,32 @@ export const NotionTrashModal: React.FC<NotionTrashModalProps> = ({
       const res = await fetch('/api/notion/restore', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pageIds: idsToRestore })
+        body: JSON.stringify({ pageIds: idsToRestore }),
       });
       const data = await res.json();
       if (!data.success) {
         throw new Error(data.error || '還原失敗');
       }
 
-      const restoredCardsList = archivedCards.filter(c => selectedIds.has(c.id));
+      const restoredCardsList = archivedCards.filter((c) => selectedIds.has(c.id));
       await saveAllCardsToDB(restoredCardsList);
       onRestoredCards(restoredCardsList);
 
       addToast({
         type: 'success',
-        message: `🎉 成功還原 ${data.restoredCount} 筆名片回 Notion 與系統中！`
+        message: `成功還原 ${data.restoredCount} 筆名片回 Notion 與本地資料庫`,
       });
 
-      // Update remaining list
-      setArchivedCards(prev => prev.filter(c => !selectedIds.has(c.id)));
+      setArchivedCards((prev) => prev.filter((c) => !selectedIds.has(c.id)));
       setSelectedIds(new Set());
 
       if (restoredCardsList.length === archivedCards.length) {
-        setTimeout(onClose, 1000);
+        setTimeout(onClose, 800);
       }
     } catch (err: any) {
       addToast({
         type: 'error',
-        message: `還原過程發生錯誤: ${err.message}`
+        message: `還原過程發生錯誤：${err.message}`,
       });
     } finally {
       setIsRestoring(false);
@@ -110,30 +119,33 @@ export const NotionTrashModal: React.FC<NotionTrashModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[9999] bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 animate-fadeIn">
-      <div className="bg-white w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl shadow-2xl overflow-hidden border border-slate-200">
-        
+    <div
+      className="fixed inset-0 z-[9999] bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 animate-fadeIn"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+    >
+      <div
+        className="bg-white w-full max-w-2xl max-h-[88vh] flex flex-col rounded-2xl shadow-xl overflow-hidden border border-slate-200 animate-scaleUp"
+        onClick={(e) => e.stopPropagation()}
+      >
         {/* Header */}
-        <div className="p-4 sm:p-5 border-b border-slate-100 flex justify-between items-center bg-slate-50/90">
+        <div className="px-5 py-4 border-b border-slate-200 flex justify-between items-center bg-white">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-md shadow-indigo-200 shrink-0">
-              <i className="fa-solid fa-box-archive text-lg"></i>
+            <div className="w-9 h-9 rounded-lg bg-indigo-50 text-indigo-600 border border-indigo-100 flex items-center justify-center shrink-0">
+              <Archive className="w-4 h-4" />
             </div>
             <div>
-              <h3 className="text-lg font-black text-slate-900 flex items-center gap-2">
-                <span>Notion 封存與垃圾桶名片檢查</span>
+              <h3 className="text-base font-semibold font-display text-slate-900 flex items-center gap-2">
+                <span>Notion 封存與垃圾桶檢查</span>
                 {!isLoading && (
-                  <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${
-                    archivedCards.length > 0 
-                      ? 'bg-amber-100 text-amber-800' 
-                      : 'bg-emerald-100 text-emerald-800'
-                  }`}>
-                    {archivedCards.length} 筆已封存
+                  <span className="text-xs font-medium text-slate-500 tabular-nums">
+                    · {archivedCards.length} 筆已封存
                   </span>
                 )}
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                自動掃描 Notion 資料庫中已被封存或移至垃圾桶的名片，支援一鍵直接還原
+                掃描 Notion 資料庫中已封存或移至垃圾桶的名片，支援批次直接還原
               </p>
             </div>
           </div>
@@ -141,15 +153,16 @@ export const NotionTrashModal: React.FC<NotionTrashModalProps> = ({
             type="button"
             onClick={onClose}
             disabled={isRestoring}
-            className="w-8 h-8 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 flex items-center justify-center transition-colors cursor-pointer"
+            className="w-8 h-8 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 flex items-center justify-center transition-colors cursor-pointer"
+            aria-label="關閉"
           >
-            <i className="fa-solid fa-xmark"></i>
+            <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Action Bar */}
         {!isLoading && archivedCards.length > 0 && (
-          <div className="bg-indigo-50/60 px-4 sm:px-6 py-2.5 border-b border-indigo-100 flex items-center justify-between gap-2">
+          <div className="bg-slate-50 px-5 py-2.5 border-b border-slate-200 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <input
                 type="checkbox"
@@ -158,7 +171,10 @@ export const NotionTrashModal: React.FC<NotionTrashModalProps> = ({
                 onChange={handleSelectAll}
                 className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600"
               />
-              <label htmlFor="select-all-trash" className="text-xs font-bold text-slate-700 cursor-pointer select-none">
+              <label
+                htmlFor="select-all-trash"
+                className="text-xs font-semibold text-slate-700 cursor-pointer select-none tabular-nums"
+              >
                 全選 (已選 {selectedIds.size} / {archivedCards.length} 筆)
               </label>
             </div>
@@ -167,17 +183,17 @@ export const NotionTrashModal: React.FC<NotionTrashModalProps> = ({
               type="button"
               onClick={handleRestoreSelected}
               disabled={isRestoring || selectedIds.size === 0}
-              className="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg text-xs font-black flex items-center gap-1.5 shadow-sm shadow-indigo-200 transition-all cursor-pointer"
+              className="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer tabular-nums"
             >
               {isRestoring ? (
                 <>
-                  <i className="fa-solid fa-circle-notch fa-spin"></i>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
                   <span>還原中...</span>
                 </>
               ) : (
                 <>
-                  <i className="fa-solid fa-rotate-left"></i>
-                  <span>一鍵還原選取名片 ({selectedIds.size})</span>
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>還原選取名片 ({selectedIds.size})</span>
                 </>
               )}
             </button>
@@ -185,33 +201,35 @@ export const NotionTrashModal: React.FC<NotionTrashModalProps> = ({
         )}
 
         {/* Content Body */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 custom-scrollbar bg-slate-50/40">
+        <div className="flex-1 overflow-y-auto p-5 custom-scrollbar bg-slate-50/50">
           {isLoading ? (
-            <div className="flex flex-col items-center justify-center h-56 text-slate-400 gap-3">
-              <i className="fa-solid fa-circle-notch fa-spin text-3xl text-indigo-500"></i>
-              <span className="text-xs font-bold text-slate-600">正在自動掃描 Notion 資料庫垃圾桶中...</span>
+            <div className="flex flex-col items-center justify-center h-52 text-slate-500 gap-3">
+              <Loader2 className="w-6 h-6 animate-spin text-indigo-600" />
+              <span className="text-xs font-medium">正在掃描 Notion 封存紀錄...</span>
             </div>
           ) : errorMessage ? (
             <div className="p-4 bg-rose-50 border border-rose-200 rounded-xl text-xs text-rose-700 flex items-center gap-2">
-              <i className="fa-solid fa-triangle-exclamation text-base"></i>
+              <AlertTriangle className="w-4 h-4 shrink-0" />
               <span>{errorMessage}</span>
             </div>
           ) : archivedCards.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-8 px-4 text-slate-400 gap-3">
-              <div className="w-14 h-14 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center text-2xl shadow-xs">
-                <i className="fa-solid fa-check"></i>
+            <div className="flex flex-col items-center justify-center py-8 px-4 text-slate-500 gap-3">
+              <div className="w-12 h-12 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-600 flex items-center justify-center">
+                <Check className="w-5 h-5" />
               </div>
               <div className="text-center">
-                <h4 className="text-base font-black text-slate-800">Notion 垃圾桶中目前為 0 筆封存</h4>
+                <h4 className="text-sm font-semibold font-display text-slate-900">
+                  目前沒有任何封存或誤刪的名片
+                </h4>
                 <p className="text-xs text-slate-500 mt-1 max-w-md leading-relaxed">
-                  這代表您的 Notion 資料庫中<strong>沒有任何名片被刪除或移至垃圾桶</strong>，所有名片都完好儲存於 Notion 中！
+                  Notion 資料庫中的所有聯絡人紀錄皆處於正常啟用狀態。
                 </p>
               </div>
 
               {onLoadAllFromNotion && (
-                <div className="mt-3 p-4 bg-indigo-50/70 border border-indigo-100 rounded-xl flex flex-col items-center gap-2.5 max-w-sm w-full">
-                  <span className="text-xs text-indigo-900 font-bold text-center">
-                    想要將 Notion 上的所有名片完整載入回本系統嗎？
+                <div className="mt-3 p-4 bg-white border border-slate-200 rounded-xl flex flex-col items-center gap-2.5 max-w-sm w-full">
+                  <span className="text-xs text-slate-700 font-medium text-center">
+                    需要將 Notion 上的全部名片重新同步至本機嗎？
                   </span>
                   <button
                     type="button"
@@ -219,20 +237,21 @@ export const NotionTrashModal: React.FC<NotionTrashModalProps> = ({
                       onClose();
                       onLoadAllFromNotion();
                     }}
-                    className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-black flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer"
+                    className="w-full py-2 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors cursor-pointer"
                   >
-                    <i className="fa-solid fa-cloud-arrow-down text-sm"></i>
-                    <span>立即從 Notion 載入全部名片 📥</span>
+                    <CloudDownload className="w-3.5 h-3.5" />
+                    <span>從 Notion 載入全部名片</span>
                   </button>
                 </div>
               )}
             </div>
           ) : (
             <div className="space-y-2">
-              {archivedCards.map(c => {
-                const displayName = (c.firstName || c.lastName)
-                  ? `${c.firstName || ''} ${c.lastName || ''}`.trim()
-                  : (c.company || '未知名片');
+              {archivedCards.map((c) => {
+                const displayName =
+                  c.firstName || c.lastName
+                    ? `${c.firstName || ''} ${c.lastName || ''}`.trim()
+                    : c.company || '未知名片';
 
                 const isChecked = selectedIds.has(c.id);
 
@@ -240,10 +259,10 @@ export const NotionTrashModal: React.FC<NotionTrashModalProps> = ({
                   <div
                     key={c.id}
                     onClick={() => handleToggleSelect(c.id)}
-                    className={`p-3 rounded-xl border flex items-center gap-3 transition-all cursor-pointer ${
-                      isChecked 
-                        ? 'bg-white border-indigo-400 shadow-xs ring-1 ring-indigo-300/30' 
-                        : 'bg-white/70 border-slate-200 hover:border-slate-300 opacity-85'
+                    className={`p-3 rounded-xl border flex items-center gap-3 transition-colors cursor-pointer ${
+                      isChecked
+                        ? 'bg-white border-indigo-400 ring-1 ring-indigo-500/15'
+                        : 'bg-white/80 border-slate-200 hover:border-slate-300'
                     }`}
                   >
                     <input
@@ -254,25 +273,23 @@ export const NotionTrashModal: React.FC<NotionTrashModalProps> = ({
                       className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer accent-indigo-600 shrink-0"
                     />
 
-                    <CardThumbnail card={c} size="md" className="rounded-lg shadow-2xs" />
+                    <CardThumbnail card={c} size="md" className="rounded-md" />
 
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-bold text-slate-800 truncate">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-sm font-semibold text-slate-900 truncate">
                           {displayName}
                         </span>
                         {c.category && (
-                          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-slate-100 text-slate-600">
-                            {c.category}
-                          </span>
+                          <span className="text-xs text-slate-400">· {c.category}</span>
                         )}
                       </div>
-                      <div className="text-xs text-slate-500 truncate mt-0.5 font-medium">
-                        {c.company || '無公司'} {c.title ? `• ${c.title}` : ''}
+                      <div className="text-xs text-slate-500 truncate mt-0.5">
+                        {[c.company || '無公司', c.title].filter(Boolean).join(' · ')}
                       </div>
                       {(c.email || c.phone) && (
-                        <div className="text-[11px] text-slate-400 truncate mt-0.5">
-                          {c.email} {c.phone ? `• ${c.phone}` : ''}
+                        <div className="text-[11px] text-slate-400 font-mono truncate mt-0.5">
+                          {[c.email, c.phone].filter(Boolean).join(' · ')}
                         </div>
                       )}
                     </div>
@@ -284,22 +301,22 @@ export const NotionTrashModal: React.FC<NotionTrashModalProps> = ({
         </div>
 
         {/* Footer */}
-        <div className="p-3 sm:p-4 border-t border-slate-100 flex justify-between items-center bg-white">
+        <div className="px-5 py-3.5 border-t border-slate-200 flex justify-between items-center bg-white">
           <button
             type="button"
             onClick={fetchArchivedCards}
             disabled={isLoading || isRestoring}
-            className="px-3 py-1.5 text-xs font-bold text-slate-600 hover:text-indigo-600 hover:bg-slate-100 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+            className="px-3 py-1.5 text-xs font-semibold text-slate-600 hover:text-indigo-600 hover:bg-slate-100 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
           >
-            <i className="fa-solid fa-arrows-rotate text-xs"></i>
-            <span>重新整理掃描</span>
+            <RefreshCw className="w-3.5 h-3.5" />
+            <span>重新掃描</span>
           </button>
 
           <button
             type="button"
             onClick={onClose}
             disabled={isRestoring}
-            className="px-4 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+            className="px-4 py-1.5 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors cursor-pointer"
           >
             關閉
           </button>

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { MessageCircle, X, Send, Loader2, Globe, Database } from 'lucide-react';
+import { MessageSquare, X, Send, Loader2, Globe, Database, ArrowUpRight } from 'lucide-react';
 import Markdown from 'react-markdown';
 import { BusinessCardData } from '../types';
 import { filterCards, FilterIntent } from '../utils/cardFilters';
@@ -20,7 +20,13 @@ interface ChatBoxProps {
   onIntentDetected?: (intent: FilterIntent) => void;
 }
 
-export default function ChatBox({ cards, onJumpToCard, externalSearchQuery, onExternalSearchConsumed, onIntentDetected }: ChatBoxProps) {
+export default function ChatBox({
+  cards,
+  onJumpToCard,
+  externalSearchQuery,
+  onExternalSearchConsumed,
+  onIntentDetected,
+}: ChatBoxProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -28,120 +34,132 @@ export default function ChatBox({ cards, onJumpToCard, externalSearchQuery, onEx
   const [isSearchEnabled, setIsSearchEnabled] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // External Search Trigger
   useEffect(() => {
     if (externalSearchQuery) {
       setIsOpen(true);
       setIsSearchEnabled(true);
-      setInput(""); // Clear current input
-      
-      // We need a slight delay to ensure UI is ready or just call send logic
+      setInput('');
+
       const triggerSearch = async () => {
-        const userMessage: ChatMessage = { id: Date.now().toString(), role: 'user', content: externalSearchQuery };
-        setMessages(prev => [...prev, userMessage]);
+        const userMessage: ChatMessage = {
+          id: Date.now().toString(),
+          role: 'user',
+          content: externalSearchQuery,
+        };
+        setMessages((prev) => [...prev, userMessage]);
         setIsTyping(true);
 
         try {
-          // Stage 1: Intent Extraction
           const intentRes = await fetch('/api/chat/intent', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: userMessage.content })
+            body: JSON.stringify({ prompt: userMessage.content }),
           });
           const intentData = await intentRes.json();
-          
+
           let candidateCards = cards;
           if (intentData.success && intentData.intent.intentType === 'card_search') {
-              candidateCards = filterCards(cards, intentData.intent);
-              onIntentDetected?.(intentData.intent);
+            candidateCards = filterCards(cards, intentData.intent);
+            onIntentDetected?.(intentData.intent);
           }
 
-          // Stage 2: Chat with Filtered Context
           const res = await fetch('/api/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
+            body: JSON.stringify({
               prompt: userMessage.content,
               isSearchEnabled: true,
-              cards: candidateCards 
-            })
+              cards: candidateCards,
+            }),
           });
           const data = await res.json();
-          
-          const modelMessage: ChatMessage = { 
-            id: (Date.now() + 1).toString(), 
-            role: 'model', 
-            content: data.success ? data.reply : `❌ 錯誤: \n${data.error}`,
+
+          const modelMessage: ChatMessage = {
+            id: (Date.now() + 1).toString(),
+            role: 'model',
+            content: data.success ? data.reply : `發生錯誤：\n${data.error}`,
             sources: data.sources,
-            linkedCards: data.linkedCards
+            linkedCards: data.linkedCards,
           };
-          setMessages(prev => [...prev, modelMessage]);
+          setMessages((prev) => [...prev, modelMessage]);
         } catch (e: any) {
-          setMessages(prev => [...prev, { id: Date.now().toString(), role: 'model', content: `❌ 網路連線錯誤: \n${e.message}` }]);
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: Date.now().toString(),
+              role: 'model',
+              content: `網路連線異常：\n${e.message}`,
+            },
+          ]);
         } finally {
           setIsTyping(false);
           onExternalSearchConsumed?.();
         }
       };
-      
+
       triggerSearch();
     }
   }, [externalSearchQuery]);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-
   useEffect(() => {
-    scrollToBottom();
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isTyping]);
 
   const handleSend = async () => {
     if (!input.trim()) return;
-    
+
     const userPrompt = input;
-    const userMessage: ChatMessage = { id: Date.now().toString(), role: 'user', content: userPrompt };
-    setMessages(prev => [...prev, userMessage]);
+    const userMessage: ChatMessage = {
+      id: Date.now().toString(),
+      role: 'user',
+      content: userPrompt,
+    };
+    setMessages((prev) => [...prev, userMessage]);
     setInput('');
     setIsTyping(true);
 
     try {
-      // Stage 1: Intent Extraction
       const intentRes = await fetch('/api/chat/intent', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: userPrompt })
+        body: JSON.stringify({ prompt: userPrompt }),
       });
       const intentData = await intentRes.json();
-      
+
       let candidateCards = cards;
       if (intentData.success && intentData.intent.intentType === 'card_search') {
-          candidateCards = filterCards(cards, intentData.intent);
-          onIntentDetected?.(intentData.intent);
+        candidateCards = filterCards(cards, intentData.intent);
+        onIntentDetected?.(intentData.intent);
       }
 
-      // Stage 2: Chat with Filtered Context
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           prompt: userPrompt,
           isSearchEnabled,
-          cards: candidateCards
-        })
+          cards: candidateCards,
+        }),
       });
       const data = await res.json();
-      
-      const modelMessage: ChatMessage = { 
-        id: (Date.now() + 1).toString(), 
-        role: 'model', 
-        content: data.success ? data.reply : `❌ 錯誤: \n${data.error}`,
+
+      const modelMessage: ChatMessage = {
+        id: (Date.now() + 1).toString(),
+        role: 'model',
+        content: data.success ? data.reply : `發生錯誤：\n${data.error}`,
         sources: data.sources,
-        linkedCards: data.linkedCards
+        linkedCards: data.linkedCards,
       };
-      setMessages(prev => [...prev, modelMessage]);
+      setMessages((prev) => [...prev, modelMessage]);
     } catch (e: any) {
-      setMessages(prev => [...prev, { id: Date.now().toString(), role: 'model', content: `❌ 網路連線錯誤: \n${e.message}` }]);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now().toString(),
+          role: 'model',
+          content: `網路連線異常：\n${e.message}`,
+        },
+      ]);
     } finally {
       setIsTyping(false);
     }
@@ -153,161 +171,210 @@ export default function ChatBox({ cards, onJumpToCard, externalSearchQuery, onEx
 
   return (
     <>
-      {/* Floating Button */}
       <button
+        type="button"
         onClick={() => setIsOpen(true)}
-        className={`fixed bottom-6 right-6 p-4 rounded-full bg-emerald-600 text-white shadow-xl hover:bg-emerald-700 transition-transform ${isOpen ? 'scale-0' : 'scale-100'} z-50 flex items-center justify-center`}
+        className={`fixed bottom-5 right-5 h-11 px-3.5 rounded-xl bg-slate-900 text-white shadow-lg border border-slate-800 hover:bg-slate-800 transition-all ${
+          isOpen ? 'scale-0 opacity-0 pointer-events-none' : 'scale-100 opacity-100'
+        } z-30 flex items-center gap-2 cursor-pointer`}
+        title="開啟名片語意檢索助理"
       >
-        <MessageCircle size={28} />
+        <MessageSquare className="w-4 h-4 text-indigo-400" />
+        <span className="text-xs font-semibold hidden sm:inline">智慧檢索</span>
       </button>
 
-      {/* Chat Window */}
-      <div 
-        className={`fixed bottom-6 right-6 w-[360px] h-[550px] bg-white rounded-2xl shadow-2xl flex flex-col border border-gray-200 overflow-hidden transition-all duration-300 transform origin-bottom-right z-50 ${isOpen ? 'scale-100 opacity-100' : 'scale-0 opacity-0 pointer-events-none'}`}
+      <div
+        className={`fixed bottom-5 right-5 w-[360px] max-w-[calc(100vw-2.5rem)] h-[520px] max-h-[80vh] bg-white rounded-2xl shadow-2xl flex flex-col border border-slate-200 overflow-hidden transition-all duration-200 transform origin-bottom-right z-50 ${
+          isOpen ? 'scale-100 opacity-100' : 'scale-95 opacity-0 pointer-events-none'
+        }`}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 bg-emerald-600 text-white">
-          <div className="flex items-center space-x-2">
-            <MessageCircle size={20} />
-            <h3 className="font-medium">AI 助理 (即時搜尋)</h3>
+        <div className="flex items-center justify-between px-4 py-3 bg-white border-b border-slate-200 shrink-0">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-indigo-50 text-indigo-600 border border-indigo-100 flex items-center justify-center">
+              <MessageSquare className="w-3.5 h-3.5" />
+            </div>
+            <div>
+              <h3 className="text-xs font-semibold font-display text-slate-900">
+                名片語意搜尋助理
+              </h3>
+              <p className="text-[11px] text-slate-500">
+                {isSearchEnabled ? '全網背景查證已啟用' : '本地名片資料庫檢索'}
+              </p>
+            </div>
           </div>
-          <button onClick={() => setIsOpen(false)} className="hover:bg-white/20 p-1 pl-2 rounded-full transition-colors">
-            <X size={20} />
+          <button
+            type="button"
+            onClick={() => setIsOpen(false)}
+            className="w-7 h-7 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 flex items-center justify-center transition-colors cursor-pointer"
+            aria-label="關閉助理"
+          >
+            <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Message List */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50">
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-3.5 bg-slate-50 custom-scrollbar">
           {messages.length === 0 && (
-            <div className="text-center text-sm text-gray-400 mt-10">
-              <p>哈囉！我是由 Gemini 提供支援的 AI 助理。</p>
-              <p className="mt-2 text-xs">
+            <div className="text-center text-xs text-slate-500 mt-10 space-y-2 px-4">
+              <p className="font-semibold text-slate-700">EcoScan 智慧聯絡人檢索</p>
+              <p className="leading-relaxed">
+                可直接詢問「找出來自新加坡的大學教授」或開啟聯網搜尋查詢機構背景。
+              </p>
+              <div className="pt-2 flex justify-center">
                 {isSearchEnabled ? (
-                  <span className="flex items-center justify-center gap-1 text-blue-600 font-semibold bg-blue-50 py-1 px-3 rounded-full w-fit mx-auto">
-                    <Globe size={12} /> Google Search 已啟動
+                  <span className="inline-flex items-center gap-1 text-indigo-700 font-medium text-[11px]">
+                    <Globe className="w-3.5 h-3.5" />
+                    <span>聯網機構查證模式</span>
                   </span>
                 ) : (
-                  <span className="flex items-center justify-center gap-1 text-emerald-600 font-semibold bg-emerald-50 py-1 px-3 rounded-full w-fit mx-auto">
-                    <Database size={12} /> 名片數據庫模式
+                  <span className="inline-flex items-center gap-1 text-slate-600 font-medium text-[11px]">
+                    <Database className="w-3.5 h-3.5" />
+                    <span className="tabular-nums">本地資料庫模式 ({cards.length} 筆)</span>
                   </span>
                 )}
-              </p>
+              </div>
             </div>
           )}
-          {messages.map(msg => (
-            <div key={msg.id} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
-              <div className={`max-w-[85%] rounded-2xl px-4 py-2 ${msg.role === 'user' ? 'bg-emerald-600 text-white rounded-br-sm' : 'bg-white border border-gray-100 shadow-sm text-gray-800 rounded-bl-sm markdown-body text-sm'}`}>
+
+          {messages.map((msg) => (
+            <div
+              key={msg.id}
+              className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
+            >
+              <div
+                className={`max-w-[88%] rounded-xl px-3.5 py-2.5 text-xs leading-relaxed ${
+                  msg.role === 'user'
+                    ? 'bg-indigo-600 text-white rounded-br-xs'
+                    : 'bg-white border border-slate-200 text-slate-800 rounded-bl-xs'
+                }`}
+              >
                 {msg.role === 'user' ? (
-                   msg.content
+                  msg.content
                 ) : (
                   <Markdown
                     components={{
-                       a: ({ node, ...props }) => <a {...props} target="_blank" rel="noopener noreferrer" className="text-emerald-600 hover:text-emerald-700 underline font-medium" />
+                      a: ({ node, ...props }) => (
+                        <a
+                          {...props}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-indigo-600 hover:text-indigo-700 underline font-medium"
+                        />
+                      ),
                     }}
                   >
                     {msg.content}
                   </Markdown>
                 )}
-                
-                {/* Verified Sources UI */}
+
                 {msg.role === 'model' && msg.sources && msg.sources.length > 0 && (
-                  <div className="mt-3 pt-3 border-t border-gray-100">
-                    <div className="flex items-center gap-1.5 text-[10px] font-bold text-gray-400 mb-2 uppercase tracking-tight">
-                      <Globe size={10} /> 驗證來源 ({msg.sources.length})
+                  <div className="mt-2.5 pt-2.5 border-t border-slate-100">
+                    <div className="flex items-center gap-1 text-[10px] font-semibold text-slate-400 mb-1.5 tabular-nums">
+                      <Globe className="w-3 h-3" />
+                      <span>外部參考來源 ({msg.sources.length})</span>
                     </div>
-                    <div className="flex flex-wrap gap-2">
-                       {msg.sources.map((source, sIdx) => (
-                         <a 
-                           key={sIdx} 
-                           href={source.url} 
-                           target="_blank" 
-                           rel="noopener noreferrer"
-                           className="flex items-center gap-1 bg-blue-50 text-blue-600 px-2 py-1 rounded text-[9px] font-medium hover:bg-blue-100 transition-colors border border-blue-100/50"
-                         >
-                           <Globe size={8} />
-                           <span className="truncate max-w-[120px]">{source.title}</span>
-                         </a>
-                       ))}
+                    <div className="flex flex-wrap gap-1.5">
+                      {msg.sources.map((source, sIdx) => (
+                        <a
+                          key={sIdx}
+                          href={source.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 bg-slate-50 text-indigo-600 px-2 py-0.5 rounded border border-slate-200 text-[10px] font-medium hover:bg-indigo-50 transition-colors"
+                        >
+                          <span className="truncate max-w-[140px]">{source.title}</span>
+                          <ArrowUpRight className="w-2.5 h-2.5 shrink-0" />
+                        </a>
+                      ))}
                     </div>
                   </div>
                 )}
 
-                {/* Jump to Card Actions */}
-                {msg.role === 'model' && msg.linkedCards && msg.linkedCards.length > 0 && onJumpToCard && (
-                  <div className="mt-3 space-y-2">
-                    {msg.linkedCards.map((card, cIdx) => (
-                      <div key={card.id || cIdx} className="overflow-hidden rounded-xl border border-emerald-100 bg-emerald-50/50 flex items-center justify-between p-3">
-                        <div className="flex items-center gap-2">
-                          <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center shadow-sm">
-                            <Database size={16} />
-                          </div>
-                          <div className="flex flex-col">
-                            <span className="text-[10px] font-bold text-gray-400 uppercase leading-none mb-1">匹配結果</span>
-                            <span className="text-xs font-bold text-emerald-900 truncate max-w-[150px]">{card.name || '相關名片'}</span>
-                          </div>
-                        </div>
-                        <button 
-                          onClick={() => {
-                            onJumpToCard(card.id);
-                            setIsOpen(false);
-                          }}
-                          className="px-3 py-1.5 bg-emerald-600 text-white text-[10px] font-bold rounded-lg hover:bg-emerald-700 transition-colors shadow-sm flex items-center gap-1"
+                {msg.role === 'model' &&
+                  msg.linkedCards &&
+                  msg.linkedCards.length > 0 &&
+                  onJumpToCard && (
+                    <div className="mt-2.5 space-y-1.5">
+                      {msg.linkedCards.map((card, cIdx) => (
+                        <div
+                          key={card.id || cIdx}
+                          className="rounded-lg border border-slate-200 bg-slate-50 flex items-center justify-between p-2 gap-2"
                         >
-                          查看詳情 <Send size={10} className="rotate-180" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Database className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+                            <span className="text-xs font-semibold text-slate-800 truncate">
+                              {card.name || '匹配名片'}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              onJumpToCard(card.id);
+                              setIsOpen(false);
+                            }}
+                            className="px-2.5 py-1 bg-indigo-600 text-white text-[11px] font-semibold rounded-md hover:bg-indigo-700 transition-colors shrink-0 cursor-pointer"
+                          >
+                            開啟詳情
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
               </div>
             </div>
           ))}
+
           {isTyping && (
-             <div className="flex items-start">
-               <div className="bg-white border border-gray-100 shadow-sm px-4 py-3 rounded-2xl rounded-bl-sm">
-                 <Loader2 size={16} className="animate-spin text-emerald-600" />
-               </div>
-             </div>
+            <div className="flex items-start">
+              <div className="bg-white border border-slate-200 px-3.5 py-2.5 rounded-xl rounded-bl-xs">
+                <Loader2 className="w-4 h-4 animate-spin text-indigo-600" />
+              </div>
+            </div>
           )}
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input Box */}
-        <div className="p-3 bg-white border-t border-gray-100 flex flex-col gap-2">
-          {/* Toggles */}
-          <div className="flex items-center gap-2 mb-1">
+        {/* Input */}
+        <div className="p-3 bg-white border-t border-slate-200 flex flex-col gap-2 shrink-0">
+          <div className="flex items-center justify-between">
             <button
-               onClick={() => setIsSearchEnabled(!isSearchEnabled)}
-               className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider transition-all border ${
-                 isSearchEnabled 
-                  ? 'bg-blue-600 text-white border-blue-600 shadow-sm' 
-                  : 'bg-white text-gray-400 border-gray-200 hover:border-emerald-500 hover:text-emerald-600'
-               }`}
+              type="button"
+              onClick={() => setIsSearchEnabled(!isSearchEnabled)}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-semibold transition-colors border cursor-pointer ${
+                isSearchEnabled
+                  ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                  : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
+              }`}
             >
-              <Globe size={12} />
-              {isSearchEnabled ? '聯網搜尋 ON' : '聯網搜尋 OFF'}
+              <Globe className="w-3 h-3" />
+              <span>{isSearchEnabled ? '聯網搜尋：開啟' : '聯網搜尋：關閉'}</span>
             </button>
-            <div className="text-[10px] text-gray-400 font-medium italic">
-               {isSearchEnabled ? '正在搜尋全網資訊...' : '優先查詢名片庫資料'}
-            </div>
+            <span className="text-[11px] text-slate-400">
+              {isSearchEnabled ? '結合網頁背景資料' : '僅檢索名片庫'}
+            </span>
           </div>
 
           <div className="flex items-center gap-2">
             <input
               type="text"
-              className="flex-1 bg-gray-100 border-transparent focus:bg-white focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200 outline-none rounded-full px-4 py-2 text-sm transition-all"
-              placeholder={isSearchEnabled ? "問我任何事 (Gemini 聯網模式)..." : "查詢名片聯絡人..."}
+              className="flex-1 bg-slate-50 border border-slate-200 focus:bg-white focus:border-indigo-500 focus:outline-none rounded-lg px-3 py-2 text-xs text-slate-800 transition-colors"
+              placeholder={
+                isSearchEnabled ? '輸入問題或查詢機構背景...' : '輸入姓名、國家或關鍵字篩選...'
+              }
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               disabled={isTyping}
             />
-            <button 
+            <button
+              type="button"
               onClick={handleSend}
               disabled={!input.trim() || isTyping}
-              className="p-2 bg-emerald-600 text-white rounded-full disabled:opacity-50 disabled:cursor-not-allowed hover:bg-emerald-700 transition-colors flex items-center justify-center shrink-0"
+              className="w-8 h-8 bg-indigo-600 text-white rounded-lg disabled:opacity-50 hover:bg-indigo-700 transition-colors flex items-center justify-center shrink-0 cursor-pointer"
+              aria-label="送出查詢"
             >
-              <Send size={18} />
+              <Send className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>

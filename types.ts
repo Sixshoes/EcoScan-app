@@ -1,4 +1,3 @@
-
 export interface ImageAsset {
   id: string;
   storagePath: string;
@@ -13,6 +12,8 @@ export interface ImageAsset {
 
 export type SyncStatus = 'local' | 'firebase' | 'notion';
 
+export type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
+
 export interface BusinessCardData {
   id: string;
   prefix: string;
@@ -25,12 +26,13 @@ export interface BusinessCardData {
   country: string;
   email: string;
   phone: string;
-  fax: string; // Added Fax field
+  fax: string;
   subject: string;
   source: string;
   website: string;
   address: string;
   notes: string;
+  tags?: string[];
   category: 'employer' | 'academic' | 'staff' | 'other';
   reasoning: string; // Internal classification logic
   summary: string;   // Public facing introduction
@@ -39,9 +41,13 @@ export interface BusinessCardData {
   originalFileSize?: number;
   syncStatus: SyncStatus;   // Explicit sync status (local, firebase, notion)
   syncedToNotion?: boolean; // Keep for backward compatibility/migration
-  imageUrl?: string;        // Public URL of the card image (Firebase or external)
-  imageId?: string;         // New: Reference to ImageAsset
+  notionUnsyncedChanges?: boolean; // Local edits pending Notion push
+  imageUrl?: string;        // Public URL of the front card image
+  imageId?: string;         // Reference to front ImageAsset
   rotation?: number;
+  backImageUrl?: string;    // Public URL of the back card image
+  backImageId?: string;     // Reference to back ImageAsset
+  backRotation?: number;
   physicalCount?: number;   // Number of physical paper cards
   translations?: {
     title?: string;
@@ -61,7 +67,7 @@ export interface ProcessingTask {
   error?: string;
   base64?: string;
   batchIndex: number;
-  previewUrl?: string; // Added for thumbnail display
+  previewUrl?: string;
 }
 
 export type ScanStatus = 'idle' | 'busy' | 'error';
@@ -84,7 +90,8 @@ export type ExportMode =
   | 'selected_employer'
   | 'selected_academic'
   | 'selected_staff'
-  | 'selected_csv';
+  | 'selected_csv'
+  | 'qs_ready_all';
 
 export type SearchSortOption = 'name_asc' | 'name_desc' | 'company_asc' | 'date_desc' | 'date_asc';
 
@@ -94,7 +101,71 @@ export interface SearchPageState {
   isGrouped: boolean;
   filterHasEmail: boolean;
   filterHasPhone: boolean;
+  filterHasBackImage?: boolean;
   filterCategory: 'all' | 'employer' | 'academic' | 'staff' | 'other';
   filterCountry: string;
+  filterTag?: string;
+  filterSource?: string;
+}
+
+export interface FollowUpEmailDraft {
+  subject: string;
+  body: string;
+}
+
+export type DualSideRelationType =
+  | 'bilingual_mirror'
+  | 'dual_role_same_person'
+  | 'different_entity';
+
+export type DualSideResolutionStrategy =
+  | 'auto'
+  | 'merge_concurrent'
+  | 'split_into_two'
+  | 'keep_image_only';
+
+export interface BackSideExtractedFields {
+  prefix?: string;
+  firstName?: string;
+  lastName?: string;
+  title?: string;
+  company?: string;
+  department?: string;
+  industry?: string;
+  country?: string;
+  email?: string;
+  subject?: string;
+  phone?: string;
+  fax?: string;
+  website?: string;
+  address?: string;
+  notes?: string;
+  translations?: {
+    title?: string;
+    company?: string;
+    department?: string;
+    industry?: string;
+    subject?: string;
+    country?: string;
+  };
+}
+
+export interface BackSideExtractionResult {
+  relationType: DualSideRelationType;
+  hasDifferentTitle: boolean;
+  hasDifferentOrg: boolean;
+  hasDifferentPerson: boolean;
+  conflictSummary?: string;
+  recommendedBackRotation?: number;
+  backOnly: BackSideExtractedFields;
+  mergedSuggestion?: BackSideExtractedFields;
+}
+
+export interface DualSideConflictItem {
+  card: BusinessCardData;
+  extraction: BackSideExtractionResult;
+  conflictReason: string;
+  isDifferentPerson: boolean;
+  isDifferentOrg: boolean;
 }
 
